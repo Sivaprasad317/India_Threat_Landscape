@@ -18,6 +18,8 @@ Usage
   python main.py certin --incident "..." --sector BFSI
   python main.py clock --noticed "2026-09-05 08:30"
   python main.py stats
+  python main.py health                     feed freshness and failures
+  python main.py validate                   check hand-maintained data files
 """
 
 import argparse
@@ -420,6 +422,48 @@ def cmd_stats(args):
     print()
 
 
+HEALTH_COLOR = {"OK": GREEN, "MANUAL": DIM, "DEGRADED": YELLOW, "NOT COLLECTED": DIM,
+                "STALE": YELLOW, "FAILING": RED}
+
+
+def cmd_health(args):
+    from core.health import problems, source_health
+    db.init_db(); db.init_signals()
+    rows = source_health()
+    print(f"\n{BOLD}Source health{RESET}  {DIM}(last collected = last run that did not fail; "
+          f"newest record = most recent item from the feed){RESET}")
+    print(f"{DIM}{'-' * 96}{RESET}")
+    print(f"  {'status':<14}{'feed':<20}{'last collected':<16}{'newest record':<16}{'limit':<8}last error")
+    for r in rows:
+        colour = HEALTH_COLOR.get(r["status"], "")
+        limit = f"{r['max_age_days']}d" if r["max_age_days"] else "-"
+        print(f"  {colour}{r['status']:<14}{RESET}{r['collector']:<20}{r['last_collected'] or '-':<16}"
+              f"{r['newest_record'] or '-':<16}{limit:<8}{DIM}{r['last_error'][:40]}{RESET}")
+    bad = problems(rows)
+    print()
+    if bad:
+        print(f"  {RED}{len(bad)} feed(s) failing or stale{RESET}: {', '.join(r['collector'] for r in bad)}\n")
+        if args.fail_on_problems:
+            sys.exit(1)
+    else:
+        print(f"  {GREEN}All collected feeds are current.{RESET}\n")
+
+
+def cmd_validate(args):
+    from core.validate import validate_data_files
+    results = validate_data_files()
+    if not results:
+        print(f"\n{GREEN}All data files are valid.{RESET}\n")
+        return
+    print()
+    for name, found in results.items():
+        print(f"{RED}{name}{RESET}")
+        for problem in found:
+            print(f"  - {problem}")
+    print()
+    sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="India Threat Landscape Intelligence (multi-source)")
@@ -466,6 +510,14 @@ def main():
     p.set_defaults(func=cmd_clock)
 
     p = sub.add_parser("stats"); p.set_defaults(func=cmd_stats)
+
+    p = sub.add_parser("health", help="feed freshness and failures")
+    p.add_argument("--fail-on-problems", action="store_true",
+                   help="exit with code 1 when a feed is failing or stale (for CI)")
+    p.set_defaults(func=cmd_health)
+
+    p = sub.add_parser("validate", help="check the hand-maintained data files")
+    p.set_defaults(func=cmd_validate)
 
     args = parser.parse_args()
     if not args.command:

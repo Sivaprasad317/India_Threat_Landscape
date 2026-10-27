@@ -528,6 +528,113 @@ class TestFreshDataBulletin(unittest.TestCase):
         self.assertNotIn("AS13335", csv_text)
 
 
+class TestSourceHealthAndValidation(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = os.path.join(self.tmp.name, "h.db")
+        db.init_db(self.db_path)
+        db.init_signals(self.db_path)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _run(self, collector, when, seen, errors=()):
+        db.record_run(collector, when, when, seen, seen, list(errors), db_path=self.db_path)
+
+    def _signal(self, source, when):
+        db.upsert_signal(Signal(signal_type=SignalType.VULNERABILITY, title=f"{source} {when}",
+                                source=source, observed_at=when), db_path=self.db_path)
+
+    def test_status_per_feed(self):
+        from core.health import problems, source_health
+        now = datetime(2026, 10, 27, tzinfo=timezone.utc)
+        feeds = {
+            "ok_feed":       {"source": "OK Feed", "max_age_days": 3},
+            "old_records":   {"source": "Old Feed", "max_age_days": 3},
+            "broken":        {"source": "Broken Feed", "max_age_days": 3},
+            "flaky":         {"source": "Flaky Feed", "max_age_days": 3},
+            "never":         {"source": "Never Feed", "max_age_days": 3},
+            "manual":        {"source": None, "max_age_days": None},
+        }
+        self._run("ok_feed", "2026-10-27T01:00:00+00:00", 5)
+        self._signal("OK Feed", "2026-10-26T00:00:00+00:00")
+        self._run("old_records", "2026-10-27T01:00:00+00:00", 5)
+        self._signal("Old Feed", "2026-09-01T00:00:00+00:00")
+        self._run("broken", "2026-10-20T01:00:00+00:00", 5)
+        self._run("broken", "2026-10-27T01:00:00+00:00", 0, ["timeout"])
+        self._run("flaky", "2026-10-27T01:00:00+00:00", 5, ["HTTP 503 (attempt 1/3)"])
+        self._signal("Flaky Feed", "2026-10-26T00:00:00+00:00")
+        self._run("manual", "2026-10-01T01:00:00+00:00", 0)
+        rows = {r["collector"]: r for r in source_health(now=now, db_path=self.db_path, feeds=feeds)}
+        self.assertEqual(rows["ok_feed"]["status"], "OK")
+        self.assertEqual(rows["old_records"]["status"], "STALE")  # fresh run, old data
+        self.assertEqual(rows["broken"]["status"], "FAILING")
+        self.assertEqual(rows["broken"]["last_collected"], "2026-10-20")
+        self.assertEqual(rows["flaky"]["status"], "DEGRADED")
+        self.assertEqual(rows["never"]["status"], "NOT COLLECTED")
+        self.assertEqual(rows["manual"]["status"], "MANUAL")
+        self.assertEqual({r["collector"] for r in problems(list(rows.values()))}, {"old_records", "broken"})
+
+    def test_bundled_data_files_are_valid(self):
+        from core.validate import validate_data_files
+        self.assertEqual(validate_data_files(), {})
+
+    def test_validation_catches_mistakes(self):
+        import json
+        from core.validate import validate_data_files
+        files = {
+            "hacktivist_claims.json": [{"group": "X", "target": "a.gov.in", "claimed_at": "yesterday",
+                                        "sector": "BANKS", "verified": "no"}],
+            "leak_observations.json": [{"forum": "BF", "target": "Bank", "observed_at": "2026-10-01T00:00:00Z",
+                                        "claimed_records": "lots"}],
+            "entity_overrides.json": {"entries": [{"match": ["acme"], "state": "Atlantis"}]},
+            "headline_threats.json": [{"id": "a"}],
+        }
+        for name, doc in files.items():
+            with open(os.path.join(self.tmp.name, name), "w", encoding="utf-8") as f:
+                json.dump(doc, f)
+        found = validate_data_files(self.tmp.name)
+        self.assertEqual(set(found), set(files))
+        self.assertTrue(any("claimed_at" in p for p in found["hacktivist_claims.json"]))
+        self.assertTrue(any("BANKS" in p for p in found["hacktivist_claims.json"]))
+        self.assertTrue(any("claimed_records" in p for p in found["leak_observations.json"]))
+        self.assertTrue(any("Atlantis" in p for p in found["entity_overrides.json"]))
+        self.assertTrue(any("reason" in p for p in found["entity_overrides.json"]))
+
+    def test_collector_retries_transient_errors_only(self):
+        import asyncio
+        import httpx
+        from core.collectors.base import BaseCollector
+
+        calls = {"flaky": 0, "missing": 0}
+
+        def handler(request):
+            key = request.url.path.strip("/")
+            calls[key] += 1
+            if key == "flaky":
+                return httpx.Response(503) if calls[key] < 3 else httpx.Response(200, json={"ok": True})
+            return httpx.Response(404)
+
+        class Probe(BaseCollector):
+            name = "probe"
+            backoff_seconds = 0.001
+
+            async def collect(self):
+                return []
+
+        async def go(probe):
+            async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+                return (await probe.get_json(client, "http://feed.test/flaky"),
+                        await probe.get_json(client, "http://feed.test/missing"))
+
+        probe = Probe()
+        flaky, missing = asyncio.run(go(probe))
+        self.assertEqual(flaky, {"ok": True})
+        self.assertIsNone(missing)
+        self.assertEqual(calls, {"flaky": 3, "missing": 1})
+        self.assertEqual(len(probe.errors), 3)
+
+
 class TestHeadlineThreats(unittest.TestCase):
     def _entry(self, **overrides):
         entry = {

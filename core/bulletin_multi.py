@@ -43,6 +43,7 @@ from .certin import (ANNEXURE_I, DIRECTION_REF, DIRECTION_URL, DISCLAIMER,
 from .database import get_intel_items
 from .geo_india import classify_state, render_official_india_map, STATE_GEO_COORDS
 from .overrides import entity_override
+from .health import problems as health_problems, source_health
 from .headlines import (brief_text, format_date, headline_keywords, load_headline_threats,
                         news_watch, split_headlines)
 from .iocs import export_iocs_csv, extract_iocs, get_ioc_summary
@@ -1574,6 +1575,18 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         f"Generated: {now_ist.strftime('%d %b %Y %H:%M IST')}"
     ]
     story.append(Paragraph(" | ".join(_esc(m) for m in meta), st["sub"]))
+    try:
+        health_rows = source_health(now=now)
+    except sqlite3.Error:
+        health_rows = []
+    health_bad = health_problems(health_rows)
+    if health_bad:
+        story.append(Paragraph(
+            f"<font color='#B45309'><b>Source health:</b> {len(health_bad)} of "
+            f"{sum(1 for r in health_rows if r['status'] != 'MANUAL')} feeds failing or stale when this "
+            f"report was generated ({_esc(', '.join(r['source'] for r in health_bad[:4]))}"
+            f"{', ...' if len(health_bad) > 4 else ''}). See the Source Health table in the Methodology section.</font>",
+            st["sub"]))
     story.append(Spacer(1, 6))
 
     seen_multiple_count = correlation.get("corroborated_count", 0)
@@ -2684,6 +2697,28 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         story.append(Spacer(1, 2.0))
 
     story.append(Spacer(1, 4))
+    if health_rows:
+        story.append(Paragraph("<b>Source Health at Generation</b>", st["h3"]))
+        story.append(Paragraph(
+            "Last collected is the last collector run that did not fail; newest record is the most recent item the feed "
+            "returned. A recently collected feed can still carry old records. Limits are the age after which a feed counts as stale.",
+            st["small"]))
+        status_hex = {"OK": "#2F855A", "DEGRADED": "#B7791F", "STALE": "#C2410C", "FAILING": "#9B1C1C",
+                      "NOT COLLECTED": "#5B6573", "MANUAL": "#5B6573"}
+        h_rows = [[Paragraph(f"<b>{h}</b>", st["cellb"]) for h in
+                   ("Feed", "Status", "Last collected", "Newest record", "Stale after")]]
+        for r in health_rows:
+            h_rows.append([
+                Paragraph(_esc(r["source"]), st["cell"]),
+                Paragraph(f"<font color='{status_hex.get(r['status'], '#5B6573')}'><b>{r['status']}</b></font>", st["cell"]),
+                Paragraph(_esc(r["last_collected"] or "never"), st["cellc"]),
+                Paragraph(_esc(r["newest_record"] or "-"), st["cellc"]),
+                Paragraph(f"{r['max_age_days']} days" if r["max_age_days"] else "analyst-maintained", st["cellc"]),
+            ])
+        story.append(_table(h_rows, [56 * mm, 30 * mm, 30 * mm, 30 * mm, 32 * mm], st, zebra=True,
+                            padding=(1.2, 1.2, 2.5, 2.5)))
+        story.append(Spacer(1, 5))
+
     story.append(Paragraph("<b>Admiralty Intelligence Confidence Scale (ICD 203 Reference)</b>", st["h3"]))
 
     adm_rows = [

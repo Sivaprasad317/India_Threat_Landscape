@@ -1,0 +1,77 @@
+name: Scheduled collection and bulletin
+
+# Collects every feed once a day, checks source health and builds the public
+# (TLP:CLEAR) bulletin. The signal database is carried between runs in the
+# Actions cache, starting from the copy committed in the repository.
+#
+# Optional repository secrets: ABUSECH_AUTH_KEY, OTX_API_KEY, NVD_API_KEY,
+# SHODAN_API_KEY. Collectors without a key are skipped, not failed.
+#
+# A failing or stale feed makes the run fail, so GitHub emails the repository
+# owner; the bulletin is still built and uploaded first.
+
+on:
+  schedule:
+    - cron: "17 1 * * *"   # 06:47 IST daily
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduled-run
+  cancel-in-progress: false
+
+jobs:
+  collect-and-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ABUSECH_AUTH_KEY: ${{ secrets.ABUSECH_AUTH_KEY }}
+      OTX_API_KEY: ${{ secrets.OTX_API_KEY }}
+      NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+      SHODAN_API_KEY: ${{ secrets.SHODAN_API_KEY }}
+      SCORING_ANCHOR: now
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore the signal database from the previous run
+        uses: actions/cache/restore@v4
+        with:
+          path: cache/india_threats.db
+          key: signal-db-${{ github.run_id }}
+          restore-keys: signal-db-
+
+      - name: Validate hand-maintained data files
+        run: python main.py validate
+
+      - name: Collect all feeds
+        run: python main.py collect --days 14
+
+      - name: Save the signal database for the next run
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: cache/india_threats.db
+          key: signal-db-${{ github.run_id }}
+
+      - name: Build the public bulletin
+        run: python main.py bulletin --days 30 --public --outdir scheduled-output
+
+      - name: Upload the bulletin and IOC sheet
+        uses: actions/upload-artifact@v4
+        with:
+          name: bulletin-${{ github.run_number }}
+          path: scheduled-output/
+          retention-days: 30
+
+      - name: Check source health (fails the run when a feed is failing or stale)
+        run: python main.py health --fail-on-problems
