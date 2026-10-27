@@ -123,12 +123,12 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
         assert unique_orgs == 44, f"QA FAIL: Expected 44 unique victim entities, got {unique_orgs}"
 
         corridors_spec = [
-            ("Western Industrial Hub", ["Gujarat", "Maharashtra"], 14, 14),
-            ("Northern Administrative & Commercial Hub", ["Delhi NCR"], 9, 9),
-            ("Southern Technology & Healthcare Corridor", ["Karnataka", "Tamil Nadu", "Telangana & AP"], 12, 13),
+            ("Western Industrial Hub", ["Gujarat", "Maharashtra"], 13, 13),
+            ("Northern Administrative & Commercial Hub", ["Delhi NCR"], 8, 8),
+            ("Southern Technology & Healthcare Corridor", ["Karnataka", "Tamil Nadu", "Telangana & AP"], 11, 12),
             ("Central & Eastern Industrial Corridor", ["Chhattisgarh"], 1, 4),
-            ("Northern & Western Fringe", ["Haryana", "Punjab & Chandigarh", "Uttarakhand", "Rajasthan"], 4, 5),
-            ("Location Unresolved / Corporate Cloud", ["Location Unresolved"], 4, 4),
+            ("Northern & Western Fringe", ["Haryana", "Punjab & Chandigarh", "Uttarakhand", "Rajasthan"], 5, 6),
+            ("Location Unresolved / Corporate Cloud", ["Location Unresolved"], 6, 6),
         ]
 
         total_corridor_orgs = 0
@@ -296,16 +296,16 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
             assert len(csv_rows) == 50, f"QA FAIL: Expected 50 CSV rows in public mode, got {len(csv_rows)}"
             assert ioc_sum["total_indicators"] == 50, f"QA FAIL: Expected 50 IOCs, got {ioc_sum['total_indicators']}"
             assert ioc_sum["unique_hosts"] == 43, f"QA FAIL: Expected 43 unique hosts, got {ioc_sum['unique_hosts']}"
-            assert ioc_sum["compromised_hosts"] == 18, f"QA FAIL: Expected 18 compromised hosts, got {ioc_sum['compromised_hosts']}"
-            assert ioc_sum["unverified_hosts"] == 25, f"QA FAIL: Expected 25 unverified hosts, got {ioc_sum['unverified_hosts']}"
+            assert ioc_sum["compromised_hosts"] == 35, f"QA FAIL: Expected 35 compromised hosts, got {ioc_sum['compromised_hosts']}"
+            assert ioc_sum["unverified_hosts"] == 8, f"QA FAIL: Expected 8 unverified hosts, got {ioc_sum['unverified_hosts']}"
             assert ioc_sum["phishing_hosts"] == 0, f"QA FAIL: Expected 0 phishing hosts in public mode, got {ioc_sum['phishing_hosts']}"
             print(f"  [PASS] Companion IOC CSV Integrity (50 records, 43 hosts, SHA-256: {csv_hash[:16]}...)")
         else:
             assert len(csv_rows) == 50, f"QA FAIL: Expected 50 CSV rows in internal mode, got {len(csv_rows)}"
             assert ioc_sum["total_indicators"] == 50, f"QA FAIL: Expected 50 IOCs, got {ioc_sum['total_indicators']}"
             assert ioc_sum["unique_hosts"] == 43, f"QA FAIL: Expected 43 unique hosts, got {ioc_sum['unique_hosts']}"
-            assert ioc_sum["compromised_hosts"] == 18, f"QA FAIL: Expected 18 compromised hosts, got {ioc_sum['compromised_hosts']}"
-            assert ioc_sum["unverified_hosts"] == 25, f"QA FAIL: Expected 25 unverified hosts, got {ioc_sum['unverified_hosts']}"
+            assert ioc_sum["compromised_hosts"] == 35, f"QA FAIL: Expected 35 compromised hosts, got {ioc_sum['compromised_hosts']}"
+            assert ioc_sum["unverified_hosts"] == 8, f"QA FAIL: Expected 8 unverified hosts, got {ioc_sum['unverified_hosts']}"
             assert ioc_sum["phishing_hosts"] == 0, f"QA FAIL: Expected 0 phishing hosts, got {ioc_sum['phishing_hosts']}"
             print(f"  [PASS] Companion IOC CSV Integrity (50 records, 43 hosts, SHA-256: {csv_hash[:16]}...)")
     else:
@@ -442,8 +442,8 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
     assert "Compromised Sites (Infra)" not in full_pdf_text, (
         "QA FAIL: Obsolete phrase 'Compromised Sites (Infra)' found in PDF"
     )
-    assert "1 orgs" not in full_pdf_text, "QA FAIL: Pluralisation error '1 orgs' detected in PDF"
-    assert "1 posts" not in full_pdf_text, "QA FAIL: Pluralisation error '1 posts' detected in PDF"
+    assert not re.search(r"(?<![\d.])1 orgs\b", full_pdf_text), "QA FAIL: Pluralisation error '1 orgs' detected in PDF"
+    assert not re.search(r"(?<![\d.])1 posts\b", full_pdf_text), "QA FAIL: Pluralisation error '1 posts' detected in PDF"
     assert "01-Sep-2026" not in full_pdf_text, "QA FAIL: Obsolete date '01-Sep-2026' detected in PDF text layer"
 
     # TLP label consistency
@@ -475,6 +475,13 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
 
     norm_full = " ".join(full_pdf_text.split())
 
+    # Statements the bulletin derives from data must match the same derivation here
+    from .bulletin_multi import compute_feed_provenance
+    due = (datetime.now(IST).date() + timedelta(days=7)).strftime("%d %b %Y")
+    for phrase in (compute_feed_provenance(signals)["currency_note"],
+                   f"Recommended target date: {due}"):
+        assert " ".join(phrase.split()) in norm_full, f"QA FAIL: Derived statement missing from PDF text: '{phrase}'"
+
     # Shared required architectural elements
     SHARED_REQUIRED = [
         "Observed Vulnerability Vectors (KEV)",
@@ -484,7 +491,7 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
         "Delivery/Phishing Hosts (Infra)",
         "Purpose, Target Audience",
         "Technical Metadata & Pipeline Provenance:",
-        "Intelligence Feed Snapshot Ingestion Dates (9 Feeds):",
+        f"Intelligence Feed Snapshot Ingestion Dates ({len({x.source for x in signals})} Feeds):",
     ]
     for phrase in SHARED_REQUIRED:
         norm_phrase = " ".join(phrase.split())
@@ -496,21 +503,18 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
             "12-18 Aug",
             "07-10 Oct, 4 days",
             "07-10 Oct (partial)",
-            "Data current to 10-Oct (CISA KEV and ransomlook.io: 08-Oct)",
             "2026-10-03 to 2026-10-10",
             "Active KEV exploitation",
             "Baseline (older CVE, still in KEV)",
             "Location Unresolved",
             "Ranking criteria: Sorted by aggregate disclosure volume",
             "Priority Extortion Telemetry (Disclosures by Sector & Threat Actor)",
-            "Recommended target date: 17 Oct 2026",
             "Rankings are sensitive to the Infra component",
-            "most frequently observed edge-device CVEs in KEV",
             "Krybit, TheGentlemen, Vexy, Clop",
             "referring to the domain suffix (.in ccTLDs), not hosting location",
             "CERT-In (09-Oct), CISA KEV (08-Oct), NVD (10-Oct)",
             "31 + 19 = 50",
-            "18 compromised, 25 unverified, 0 phishing lookalikes (43 hosts, 50 records)",
+            "35 compromised, 8 unverified, 0 phishing lookalikes (43 hosts, 50 records)",
             "23 of 50 indicators fell in the 07-10 Oct interval (4 days)",
             ioc_sum["asn_distribution"],
         ]

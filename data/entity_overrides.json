@@ -1,0 +1,414 @@
+{
+  "_about": "Analyst-reviewed corrections for named organisations seen in feeds: display name, sector and state. Code never writes this file. Each entry matches when any 'match' string appears in the organisation name (or equals it when 'exact' is true). Add a reason and review date for every change.",
+  "entries": [
+    {
+      "match": [
+        "simplexengg"
+      ],
+      "name": "Simplex Engineering Works Pvt. Ltd.",
+      "sector": "MANUFACTURING",
+      "state": "Chhattisgarh",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "simplex engineering"
+      ],
+      "exact": true,
+      "name": "Simplex Engineering Works Pvt. Ltd.",
+      "sector": "MANUFACTURING",
+      "state": "Chhattisgarh",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "raajratna"
+      ],
+      "name": "Raajratna Metal Industries",
+      "sector": "MANUFACTURING",
+      "state": "Gujarat",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "sai.org.in"
+      ],
+      "name": "Shri Saibaba Sansthan Trust",
+      "sector": "EDUCATION",
+      "state": "Maharashtra",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "vit.ac.in"
+      ],
+      "name": "Vellore Institute of Technology (VIT)",
+      "sector": "EDUCATION",
+      "state": "Tamil Nadu",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "swadeshicipl"
+      ],
+      "name": "Swadeshi Commercial Co. Ltd",
+      "state": "Delhi NCR",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "vedantaa"
+      ],
+      "name": "Vedanta Institute",
+      "sector": "EDUCATION",
+      "state": "Maharashtra",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "southsign"
+      ],
+      "name": "South Sign Systems",
+      "state": "Tamil Nadu",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "seashellhospital"
+      ],
+      "name": "Sea Shell Hospital",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "karkinos"
+      ],
+      "name": "Karkinos Healthcare",
+      "state": "Telangana & AP",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "jindallife"
+      ],
+      "name": "Jindal Life Sciences",
+      "state": "Delhi NCR",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "shalina"
+      ],
+      "name": "Shalina Healthcare",
+      "sector": "PHARMA",
+      "state": "Maharashtra",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "labindia"
+      ],
+      "name": "Labindia Instruments Pvt. Ltd.",
+      "sector": "MANUFACTURING",
+      "state": "Maharashtra",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "qcpl"
+      ],
+      "name": "Quality Control Products Ltd (QCPL)",
+      "state": "Delhi NCR",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "jpmgroup",
+        "jay packaging"
+      ],
+      "name": "JPM Group (Jay Packaging)",
+      "sector": "MANUFACTURING",
+      "state": "Delhi NCR",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "atomberg"
+      ],
+      "name": "Atomberg Technologies",
+      "state": "Maharashtra",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "9altitudes"
+      ],
+      "name": "9altitudes India",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "vi***in"
+      ],
+      "name": "vi***in (Masked Logistics Entity)",
+      "state": "Location Unresolved",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "licindia"
+      ],
+      "exact": true,
+      "name": "Licindia (Unverified Domain Claim)",
+      "sector": "UNCLASSIFIED",
+      "sector_label": "Unclassified / Unverified",
+      "state": "Maharashtra",
+      "unverified": true,
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "indic"
+      ],
+      "exact": true,
+      "name": "Indic Inspirations",
+      "state": "Karnataka",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "sancity"
+      ],
+      "exact": true,
+      "name": "Sancity Developers",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "bonjour"
+      ],
+      "name": "Bonjour Group",
+      "state": "Delhi NCR",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "gindre"
+      ],
+      "name": "Gindre India Pvt. Ltd.",
+      "state": "Haryana",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "seasia"
+      ],
+      "name": "Seasia Infotech Pvt. Ltd.",
+      "state": "Punjab & Chandigarh",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "university of delhi",
+        "(du)"
+      ],
+      "name": "University of Delhi (DU)",
+      "sector": "EDUCATION",
+      "state": "Delhi NCR",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "manipal"
+      ],
+      "name": "Manipal Academy of Higher Education",
+      "sector": "EDUCATION",
+      "state": "Karnataka",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "iit roorkee"
+      ],
+      "name": "IIT Roorkee",
+      "sector": "EDUCATION",
+      "state": "Uttarakhand",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "majestic holidays",
+        "majestic"
+      ],
+      "sector": "RETAIL_ECOM",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "praveg"
+      ],
+      "sector": "RETAIL_ECOM",
+      "state": "Rajasthan",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "ags cinemas"
+      ],
+      "sector": "MEDIA",
+      "state": "Tamil Nadu",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "incor"
+      ],
+      "sector": "REAL_ESTATE",
+      "state": "Telangana & AP",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "universal starch"
+      ],
+      "state": "Maharashtra",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "i2k2"
+      ],
+      "state": "Delhi NCR",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "r l fine"
+      ],
+      "state": "Karnataka",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "dodopayments"
+      ],
+      "state": "Karnataka",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "bgr energy"
+      ],
+      "state": "Tamil Nadu",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "chem process"
+      ],
+      "state": "Gujarat",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "siddhi green"
+      ],
+      "state": "Gujarat",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "annapurna fashion"
+      ],
+      "state": "Gujarat",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "soni dwarkadas"
+      ],
+      "state": "Gujarat",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "g r infra"
+      ],
+      "state": "Rajasthan",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "co-op urban bank"
+      ],
+      "state": "Telangana & AP",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "saibaba"
+      ],
+      "state": "Maharashtra",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "swadeshi"
+      ],
+      "state": "Delhi NCR",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    },
+    {
+      "match": [
+        "jindal"
+      ],
+      "state": "Delhi NCR",
+      "reason": "Moved from code rules in the original dataset (analyst review); verify before relying on it",
+      "reviewed": "2026-10-10"
+    }
+  ]
+}

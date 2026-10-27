@@ -32,9 +32,12 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from .iocs import get_ioc_summary, read_ioc_csv_metadata
+from . import report_facts as rf
+from .bulletin_multi import extract_victim_attributions
+from .iocs import extract_iocs, get_ioc_summary, read_ioc_csv_metadata
 from .scoring_multi import assign_risk_band
 from .signals import Signal, SignalType
+from .window import window_end_date
 
 
 def _pulse_styles() -> Dict[str, ParagraphStyle]:
@@ -313,7 +316,7 @@ def build_threat_pulse(
     scored_sectors: List[Dict],
     window_days: int = 7,
     prepared_by: str = "Siva prasad Boddu",
-    end_date_str: str = "2026-10-11",
+    end_date_str: str = "",
     public_csv_path: Optional[str] = None,
 ) -> str:
     """
@@ -324,7 +327,7 @@ def build_threat_pulse(
     ist = timezone(timedelta(hours=5, minutes=30))
     now_ist = datetime.now(ist)
 
-    end_date = datetime.fromisoformat(end_date_str).date()
+    end_date = datetime.fromisoformat(end_date_str).date() if end_date_str else window_end_date()
     start_date = end_date - timedelta(days=window_days)
     period_str = (
         f"{start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')}"
@@ -338,8 +341,8 @@ def build_threat_pulse(
         ioc_summary = get_ioc_summary(signals, public_mode=True)
     else:
         ioc_summary = get_ioc_summary(signals, public_mode=True)
-        total_iocs = ioc_summary.get("total_indicators", 50)
-        unique_hosts = ioc_summary.get("unique_hosts", 43)
+        total_iocs = ioc_summary.get("total_indicators", 0)
+        unique_hosts = ioc_summary.get("unique_hosts", 0)
         csv_sha256 = ""
 
     comp_hosts = ioc_summary.get("compromised_hosts", 0)
@@ -500,27 +503,33 @@ def build_threat_pulse(
             f"Named entities are shielded under community privacy guidelines unless corroborated across multiple independent feeds."
         )
     else:
-        f1_title = "1. Extortion Concentration Across Western & Northern Hubs [Confidence: C3]"
+        victims, _, _ = extract_victim_attributions(signals)
+        lead_states = rf.top_states(victims, 3)
+        f1_title = "1. Extortion Concentration Across Named Indian Hubs [Confidence: C3]"
         f1_body = (
             f"Telemetry across public leak sites identifies {total_disclosures} extortion disclosures across {total_unique_orgs} unique organisations. "
-            f"Western and Northern industrial hubs (Delhi NCR, Gujarat, Maharashtra) account for observed activity. "
-            f"Disclosures represent unverified adversary claims; named entities are shielded under community privacy guidelines unless corroborated by multi-feed evidence."
+            + (f"{', '.join(lead_states)} account for the most located victims. " if lead_states else
+               "Victim locations could not be resolved from public information. ")
+            + "Disclosures represent unverified adversary claims; named entities are shielded under community privacy guidelines unless corroborated by multi-feed evidence."
         )
 
+    edge_text = rf.edge_cve_text(rf.kev_by_product(signals), max_groups=4, max_cves=2)
     f2_title = "2. Priority Edge-Appliance Patching [Confidence: B2]"
     f2_body = (
-        "Observed in-the-wild exploitation tracked in CISA KEV concentrates on perimeter appliances: Citrix NetScaler (CVE-2026-88779, CVE-2026-88771, CVE-2026-8452), "
-        "Cisco network appliances (CVE-2026-76504, CVE-2026-76460), SonicWall SMA (CVE-2026-83548), and MikroTik RouterOS (CVE-2026-67279). "
-        "KEV entries are global, not India-specific; unpatched SSL-VPN and gateway appliances represent priority attack vectors across enterprise perimeters."
+        (f"Observed in-the-wild exploitation tracked in CISA KEV includes perimeter appliances: {edge_text}. "
+         if edge_text else f"CISA KEV lists {cisa_kevs} exploited CVEs in this window, none in edge appliances. ")
+        + "KEV entries are global, not India-specific; unpatched SSL-VPN and gateway appliances represent priority attack vectors across enterprise perimeters."
     )
 
     phish_part = f", {phish_hosts} lookalikes" if phish_hosts else ""
+    techniques = [t["technique"] for t in rf.ioc_technique_examples(extract_iocs(signals, public_mode=True))]
     f3_title = "3. Domestic .in Infrastructure Leveraged for Malware Delivery Chains [Confidence: C2]"
     f3_body = (
         f"Technical telemetry identifies {total_iocs} actionable domestic indicators across {unique_hosts} hosts "
         f"({comp_hosts} of {unique_hosts} hosts reported as compromised, {unver_hosts} unverified{phish_part}) "
-        f"utilizing exact .in ccTLD suffixes. Distribution chains leverage ClearFake, ClickFix, and EtherHiding delivery tactics "
-        f"across third-party infrastructure reported by feeds without owner knowledge."
+        f"utilizing exact .in ccTLD suffixes. "
+        + (f"Distribution chains leverage {', '.join(techniques)} delivery tactics " if techniques else "Distribution chains use ")
+        + "across third-party infrastructure reported by feeds without owner knowledge."
     )
 
     findings = [
@@ -556,7 +565,7 @@ def build_threat_pulse(
             [
                 Paragraph(
                     "<b>PRIORITY DEFENSIVE ACTION FOR SECURITY LEADERS & SOC TEAMS</b><br/>"
-                    "<b>1. Perimeter Ingress Remediation:</b> Patch Internet-facing Citrix NetScaler (CVE-2026-88779/88771/8452), Cisco (CVE-2026-76504), SonicWall SMA, and MikroTik RouterOS appliances immediately.<br/>"
+                    f"<b>1. Perimeter Ingress Remediation:</b> {'Patch Internet-facing ' + ', '.join(rf.edge_vendor_names(rf.kev_by_product(signals))) + ' appliances listed in CISA KEV immediately.' if edge_text else 'Patch the CVEs listed in CISA KEV this window, internet-facing systems first.'}<br/>"
                     "<b>2. Remote Access Hardening:</b> Enforce phishing-resistant multi-factor authentication (MFA) across all VPN, RDP, and cloud administrative portals.<br/>"
                     "<b>3. Actionable IOC Ingestion:</b> Ingest companion .in domestic indicators into perimeter monitoring in <b>alert-first mode</b>; notify site owners rather than imposing uncoordinated edge blocks.",
                     st["callout_body"],

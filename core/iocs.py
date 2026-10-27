@@ -57,55 +57,20 @@ def get_country_code(host: str) -> str:
     return "UNKNOWN"
 
 
-HOST_ASN_INFO: Dict[str, Tuple[str, str, str]] = {
-    # host -> (asn_with_registry_org, asn_country, origin_hidden)
-    "a2ztraders.in": ("AS13335 (Cloudflare)", "US", "yes"),
-    "abinteriors.in": ("AS13335 (Cloudflare)", "US", "yes"),
-    "aimst.org.in": ("AS135222 (MWNashik)", "IN", "no"),
-    "arthome.in": ("AS26496 (GoDaddy)", "US", "no"),
-    "biopharmgroup.co.in": ("AS26496 (GoDaddy)", "US", "no"),
-    "cartec.in": ("AS13335 (Cloudflare)", "US", "yes"),
-    "d4media.in": ("AS24940 (Hetzner)", "DE", "no"),
-    "divyajotifoundation.in": ("AS13335 (Cloudflare)", "US", "yes"),
-    "exsearch.in": ("AS63949 (Akamai)", "US", "no"),
-    "ffsuper.in": ("AS12876 (Scaleway)", "FR", "no"),
-    "ficus.in": ("AS46606 (Unified Layer)", "US", "no"),
-    "ftc.co.in": ("AS19148 (Hostkey)", "NL", "no"),
-    "g4gift.in": ("AS398101 (GoDaddy)", "US", "no"),
-    "ganpatimovers.in": ("AS13335 (Cloudflare)", "US", "yes"),
-    "greengine.co.in": ("AS47583 (Hostinger)", "LT", "no"),
-    "gtta.co.in": ("AS149573 (ServerAS)", "IN", "no"),
-    "gurpreetchawla.in": ("AS132335 (Leapswitch)", "IN", "no"),
-    "gwsindia.in": ("AS394695 (PublicDomainRegistry)", "US", "no"),
-    "highskyit.in": ("AS398101 (GoDaddy)", "US", "no"),
-    "iplexus.in": ("AS398101 (GoDaddy)", "US", "no"),
-    "jeh.org.in": ("AS13335 (Cloudflare)", "US", "yes"),
-    "jfindia.in": ("AS394695 (PublicDomainRegistry)", "US", "no"),
-    "kile.kerala.gov.in": ("AS47583 (Hostinger)", "LT", "no"),
-    "kloudtechnology.in": ("AS26496 (GoDaddy)", "US", "no"),
-    "krishnavalve.in": ("AS48254 (InterNetX)", "DE", "no"),
-    "letsstyle.in": ("AS26496 (GoDaddy)", "US", "no"),
-    "lightoftruth.in": ("AS46606 (Unified Layer)", "US", "no"),
-    "livo.in": ("AS26496 (GoDaddy)", "US", "no"),
-    "lorven.in": ("AS26496 (GoDaddy)", "US", "no"),
-    "macoavell.in": ("AS22611 (InMotion)", "US", "no"),
-    "magnatemedia.co.in": ("AS398101 (GoDaddy)", "US", "no"),
-    "makerman.in": ("AS31898 (Oracle)", "US", "no"),
-    "mdfs.co.in": ("AS398101 (GoDaddy)", "US", "no"),
-    "nostc.in": ("AS46606 (Unified Layer)", "US", "no"),
-    "nutsplus.co.in": ("AS31898 (Oracle)", "US", "no"),
-    "prognosisinfo.in": ("AS13335 (Cloudflare)", "US", "yes"),
-    "renewcell.co.in": ("AS26496 (GoDaddy)", "US", "no"),
-    "rias.org.in": ("AS398101 (GoDaddy)", "US", "no"),
-    "rvrpro.in": ("AS13335 (Cloudflare)", "US", "yes"),
-    "s4w.in": ("AS13335 (Cloudflare)", "US", "yes"),
-    "squarerealty.in": ("AS47583 (Hostinger)", "LT", "no"),
-    "theinstaapp.com.in": ("AS13335 (Cloudflare)", "US", "yes"),
-    "vijayateacherscollege.ac.in": ("AS31898 (Oracle)", "US", "no"),
-    "virazofurniture.in": ("AS31898 (Oracle)", "US", "no"),
-    "windsonchem.co.in": ("AS204800 (Hostinger)", "LT", "no"),
-    "woofbuddies.in": ("AS31898 (Oracle)", "US", "no"),
-}
+_ASN_CACHE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                               "data", "host_asn_cache.json")
+
+
+def _load_asn_cache(path: str = _ASN_CACHE_PATH) -> Dict[str, Tuple[str, str, str]]:
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as f:
+        hosts = json.load(f).get("hosts", {})
+    return {h: (v["asn"], v["asn_country"], v["origin_hidden"]) for h, v in hosts.items()}
+
+
+HOST_ASN_INFO: Dict[str, Tuple[str, str, str]] = _load_asn_cache()
+UNRESOLVED_ASN = ("unresolved", "unknown", "unknown")
 
 HOST_ASN_MAP = {k: v[0] for k, v in HOST_ASN_INFO.items()}
 
@@ -122,7 +87,9 @@ def resolve_host_asn_details(host: str, raw_asn: Optional[str] = None) -> Tuple[
         if h.endswith("." + k) or k.endswith("." + h):
             asn, country, hidden = v
             return (raw_asn if raw_asn and raw_asn not in ("None", "UNKNOWN", "") else asn), country, hidden
-    return "AS13335 (Cloudflare)", "US", "yes"
+    if raw_asn and raw_asn not in ("None", "UNKNOWN", ""):
+        return raw_asn, "unknown", "unknown"
+    return UNRESOLVED_ASN
 
 
 def resolve_host_asn(host: str, raw_asn: Optional[str] = None) -> str:
@@ -169,6 +136,14 @@ def extract_delivery_technique(fam: str, tags: List[str], role: str) -> str:
     return "Payload Delivery"
 
 
+def feed_reports_compromised(s: Signal, raw_data: dict) -> bool:
+    """The feed itself says this is a hacked legitimate site: ThreatFox's
+    is_compromised flag or a 'compromised' tag. Never inferred from the host."""
+    if raw_data.get("is_compromised") is True:
+        return True
+    return "compromised" in [t.lower() for t in (s.tags or [])]
+
+
 def classify_ioc_role_and_action(raw_val: str, s: Signal, raw_data: dict, is_wildcard: bool) -> Tuple[str, str]:
     """
     Classifies IOC role and recommended defensive action based strictly on evidence:
@@ -189,8 +164,7 @@ def classify_ioc_role_and_action(raw_val: str, s: Signal, raw_data: dict, is_wil
         action = "alert, notify CERT-In/NIC" if is_gov else "block, submit samples to CERT-In"
         return role, action
 
-    tags_low = [t.lower() for t in s.tags or []]
-    has_compromise_evidence = ("compromised" in tags_low) or ("virazofurniture.in" in host) or ("ficus.in" in host)
+    has_compromise_evidence = feed_reports_compromised(s, raw_data)
 
     if has_compromise_evidence:
         role = "compromised_legitimate"
@@ -278,8 +252,7 @@ def extract_iocs(signals: List[Signal], public_mode: bool = False) -> List[Dict]
         h = item["host"]
         s = item["signal"]
         ev = host_evidence[h]
-        tags_low = [t.lower() for t in (s.tags or [])]
-        if ("compromised" in tags_low) or ("virazofurniture.in" in h) or ("ficus.in" in h):
+        if feed_reports_compromised(s, item["raw_data"]):
             ev["compromised"] = True
         if s.source == "OpenPhish" or s.signal_type == SignalType.PHISHING or item["raw_data"].get("threat_type") == "phishing":
             ev["phish"] = True
@@ -355,7 +328,9 @@ def extract_iocs(signals: List[Signal], public_mode: bool = False) -> List[Dict]
         raw_asn_val = str(raw_data.get("asn") or raw_data.get("as_number") or "")
         asn_val, asn_country, origin_hidden = resolve_host_asn_details(host, raw_asn_val)
 
-        base_notes = "image-hosted payload (tagged stego/RemcosRAT)" if "ficus.in" in host else ""
+        tags_low = [t.lower() for t in (s.tags or [])]
+        base_notes = (f"image-hosted payload (tagged stego{'/' + malware if malware else ''})"
+                      if "stego" in tags_low or "steganography" in tags_low else "")
         comp_note = "host reported by feed without owner knowledge" if role in ("compromised_legitimate", "reported_compromised_by_feed") else ""
         notes = f"{base_notes}; {comp_note}" if (base_notes and comp_note) else (base_notes or comp_note)
 

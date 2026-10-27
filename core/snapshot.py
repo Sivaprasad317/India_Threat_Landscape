@@ -12,6 +12,11 @@ import os
 from typing import Any, Dict, List, Optional
 from .sectors import clean_victim_name
 from .signals import Signal
+from .window import ANCHOR_DT
+
+
+def _anchor_label() -> str:
+    return ANCHOR_DT.strftime("%Y-%m-%d %H:%M:%S IST")
 
 SNAPSHOTS_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "snapshots"
@@ -26,8 +31,8 @@ def _extract_priority_victims_from_signals(signals: List[Signal], max_count: int
     for s in sorted(v_sigs, key=lambda x: -x.risk_contribution):
         raw = s.entities.organisations[0] if (s.entities and s.entities.organisations) else s.title
         c = clean_victim_name(raw)
-        if "vi***in" in c.lower():
-            continue
+        if "***" in c:
+            continue  # masked names are not useful as priority victims
         if c.lower() not in seen:
             seen.add(c.lower())
             top_pv.append(c)
@@ -81,7 +86,7 @@ def save_run_snapshot(
     top_pv = _extract_priority_victims_from_signals(signals, 5)
 
     snapshot_data = {
-        "timestamp": timestamp_str or "2026-10-11 12:45 IST",
+        "timestamp": timestamp_str or ANCHOR_DT.strftime("%Y-%m-%d %H:%M IST"),
         "scores": {s["sector"]: s["risk_score"] for s in scored_sectors},
         "bands": {s["sector"]: s["risk_band"] for s in scored_sectors},
         "components": {s["sector"]: s["components"] for s in scored_sectors},
@@ -131,7 +136,7 @@ def generate_changes_vs_previous(
     if not prev:
         ed_label = "Public" if str(edition).lower() in ("public", "true") else "Internal"
         save_run_snapshot(scored_sectors, ioc_summary, signals, snapshot_path=snapshot_path, edition=edition, window_days=window_days)
-        return f"Baseline {ed_label} snapshot ({window_days}d window) initialized under fixed window anchor (2026-10-11 23:59:59 IST)."
+        return f"Baseline {ed_label} snapshot ({window_days}d window) initialized under fixed window anchor ({_anchor_label()})."
 
     prev_ts = prev.get("timestamp", "previous run")
     diffs = []
@@ -182,95 +187,39 @@ def generate_changes_vs_previous(
 
     # If every printed value is identical:
     if not diffs:
-        return f"No score changes vs previous run (snapshot {prev_ts}). Scoring is deterministic under fixed window anchor (2026-10-11 23:59:59 IST)."
+        return f"No score changes vs previous run (snapshot {prev_ts}). Scoring is deterministic under fixed window anchor ({_anchor_label()})."
 
     return "<b>Changes vs. Previous Run:</b> " + "; ".join(diffs)
-
-
-WEEKLY_SNAPSHOT_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "weekly_snapshot_prior.json"
-)
-
-
-def load_weekly_snapshot(path: Optional[str] = None) -> Optional[Dict]:
-    p = path or WEEKLY_SNAPSHOT_PATH
-    if not os.path.exists(p):
-        return None
-    try:
-        with open(p, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return None
-
-
-def save_weekly_snapshot(data: Dict, path: Optional[str] = None) -> str:
-    p = path or WEEKLY_SNAPSHOT_PATH
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-    return p
-
-
-def get_or_compute_weekly_prior_snapshot(all_signals: List[Signal],
-                                         path: Optional[str] = None) -> Dict:
-    """
-    Retrieves or establishes the prior week's baseline snapshot from telemetry signals
-    (anchored to 27 Sep - 04 Oct 2026).
-    """
-    existing = load_weekly_snapshot(path)
-    if existing:
-        return existing
-
-    # Compute prior 7-day week (2026-09-27 to 2026-10-04)
-    prior_sigs = [
-        s for s in all_signals
-        if s.observed_at and "2026-09-27" <= s.observed_at[:10] < "2026-10-04"
-    ]
-    from .scoring_multi import rank_sectors_multi
-    from .iocs import get_ioc_summary
-
-    prior_scored = rank_sectors_multi(prior_sigs) if prior_sigs else []
-    prior_iocs = get_ioc_summary(prior_sigs) if prior_sigs else {}
-    prior_victims = sum(1 for s in prior_sigs if s.signal_type.value in ('victim', 'data_leak'))
-    prior_kevs = len({c for s in prior_sigs if s.source == "CISA KEV" for c in (s.entities.cves or [])})
-
-    snapshot_data = {
-        "period": "2026-09-27 to 2026-10-04 (Prior Week)",
-        "timestamp": "2026-10-04 23:59:59 IST",
-        "victim_disclosures": prior_victims or 6,
-        "new_kev_count": prior_kevs or 4,
-        "ioc_count": prior_iocs.get("total_indicators", 48),
-        "scores": {s["sector"]: s["risk_score"] for s in prior_scored}
-    }
-    save_weekly_snapshot(snapshot_data, path)
-    return snapshot_data
 
 
 def compute_weekly_changes(
     current_signals: List[Signal],
     current_scored: List[Dict],
     current_ioc_summary: Dict,
-    all_signals: Optional[List[Signal]] = None,
-    path: Optional[str] = None
+    prior_signals: List[Signal],
+    prior_anchor=None,
 ) -> Dict[str, Any]:
     """
-    Computes week-over-week deltas for victims, new KEV, new IOCs, and sector score moves.
-    Returns dictionary with numeric deltas and formatted summary string.
+    Deltas against the immediately preceding period of the same length, computed
+    from the signal store (victim postings, KEV CVEs, domestic IOCs, sector scores).
     """
-    prior = get_or_compute_weekly_prior_snapshot(all_signals or current_signals, path)
+    from .iocs import get_ioc_summary
+    from .scoring_multi import rank_sectors_multi
 
-    curr_victims = sum(1 for s in current_signals if s.signal_type.value in ('victim', 'data_leak'))
-    curr_kevs = len({c for s in current_signals if s.source == "CISA KEV" for c in (s.entities.cves or [])})
-    curr_iocs = current_ioc_summary.get("total_indicators", len(current_signals))
+    prior_scored = rank_sectors_multi(prior_signals, anchor_dt=prior_anchor) if prior_signals else []
+    prior_iocs = get_ioc_summary(prior_signals) if prior_signals else {}
 
-    prev_victims = prior.get("victim_disclosures", 6)
-    prev_kevs = prior.get("new_kev_count", 4)
-    prev_iocs = prior.get("ioc_count", 48)
-    prev_scores = prior.get("scores", {})
+    def _victims(sigs):
+        return sum(1 for s in sigs if s.signal_type.value in ("victim", "data_leak"))
 
-    v_delta = curr_victims - prev_victims
-    k_delta = curr_kevs - prev_kevs
-    i_delta = curr_iocs - prev_iocs
+    def _kevs(sigs):
+        return len({c for s in sigs if s.source == "CISA KEV" for c in (s.entities.cves or [])})
+
+    curr_victims, prev_victims = _victims(current_signals), _victims(prior_signals)
+    curr_kevs, prev_kevs = _kevs(current_signals), _kevs(prior_signals)
+    curr_iocs = current_ioc_summary.get("total_indicators", 0)
+    prev_iocs = prior_iocs.get("total_indicators", 0)
+    prev_scores = {s["sector"]: s["risk_score"] for s in prior_scored}
 
     score_moves = []
     for s in current_scored:
@@ -282,26 +231,23 @@ def compute_weekly_changes(
                 short_label = s["label"].split("/")[0].split("&")[0].strip()
                 score_moves.append(f"{short_label} ({sign}{diff:.1f})")
 
-    moves_str = ", ".join(score_moves[:3]) if score_moves else "Stable (within ±0.5)"
-    v_sign = f"+{v_delta}" if v_delta > 0 else f"{v_delta}"
-    k_sign = f"+{k_delta}" if k_delta > 0 else f"{k_delta}"
-    i_sign = f"+{i_delta}" if i_delta > 0 else f"{i_delta}"
+    def _signed(n):
+        return f"+{n}" if n > 0 else f"{n}"
 
+    moves_str = ", ".join(score_moves[:3]) if score_moves else "Stable (within ±0.5)"
     summary_text = (
-        f"<b>Victim Disclosures:</b> {curr_victims} ({v_sign} vs prior week) | "
-        f"<b>Active KEV Vulnerabilities:</b> {curr_kevs} ({k_sign}) | "
-        f"<b>Domestic IOCs:</b> {curr_iocs} ({i_sign}) | "
+        f"<b>Victim Disclosures:</b> {curr_victims} ({_signed(curr_victims - prev_victims)} vs prior period) | "
+        f"<b>Active KEV Vulnerabilities:</b> {curr_kevs} ({_signed(curr_kevs - prev_kevs)}) | "
+        f"<b>Domestic IOCs:</b> {curr_iocs} ({_signed(curr_iocs - prev_iocs)}) | "
         f"<b>Sector Shifts:</b> {moves_str}"
     )
-
     return {
         "victims_current": curr_victims,
-        "victims_delta": v_delta,
+        "victims_delta": curr_victims - prev_victims,
         "kevs_current": curr_kevs,
-        "kevs_delta": k_delta,
+        "kevs_delta": curr_kevs - prev_kevs,
         "iocs_current": curr_iocs,
-        "iocs_delta": i_delta,
+        "iocs_delta": curr_iocs - prev_iocs,
         "score_moves": score_moves,
         "summary_text": summary_text,
     }
-

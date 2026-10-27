@@ -301,8 +301,9 @@ class TestIOCManagement(unittest.TestCase):
         summary = get_ioc_summary(sigs)
         self.assertEqual(summary["total_indicators"], 50)
         self.assertEqual(summary["unique_hosts"], 43)
-        self.assertEqual(summary["compromised_hosts"], 18)
-        self.assertEqual(summary["unverified_hosts"], 25)
+        # Compromise status comes from the feed's own is_compromised flag
+        self.assertEqual(summary["compromised_hosts"], 35)
+        self.assertEqual(summary["unverified_hosts"], 8)
         self.assertEqual(summary["phishing_hosts"], 0)
         self.assertEqual(summary["ioc_window_recent_count"], 23)
 
@@ -437,6 +438,94 @@ class TestBulletinQA(unittest.TestCase):
             self.assertIn("TLP:CLEAR", text)
             self.assertIn("Top 3 Strategic Findings", text)
             self.assertIn("PRIORITY DEFENSIVE ACTION", text)
+
+
+class TestFreshDataBulletin(unittest.TestCase):
+    """A bulletin built from data unlike the bundled sample must describe that
+    data: no CVE, product, actor, host or date from the sample may appear."""
+
+    SAMPLE_ONLY = ["CVE-2026-88779", "CVE-2026-76504", "MikroTik", "Citrix", "SonicWall",
+                   "virazofurniture", "ficus", "Krybit", "Clop", "12-Aug", "17 Oct 2026",
+                   "27 Sep - 04 Oct", "(9 Feeds)", "Delhi NCR, Gujarat"]
+
+    def _signals(self):
+        end = datetime(2026, 10, 11, tzinfo=timezone.utc)
+
+        def at(days_ago):
+            return (end - timedelta(days=days_ago)).isoformat()
+
+        sigs = [
+            Signal(signal_type=SignalType.VULNERABILITY, title="CVE-2026-55501 — Fortinet FortiOS: auth bypass",
+                   source="CISA KEV", observed_at=at(3), severity=Severity.CRITICAL, confidence=0.95,
+                   india_relevance=0.8, sectors=["BFSI", "IT_ITES"], entities=Entities(cves=["CVE-2026-55501"]),
+                   raw={"vendorProject": "Fortinet", "product": "FortiOS", "dateAdded": at(3)[:10],
+                        "knownRansomwareCampaignUse": "Known"}),
+            Signal(signal_type=SignalType.VULNERABILITY, title="CVE-2026-55502 — Microsoft Windows: privilege escalation",
+                   source="CISA KEV", observed_at=at(9), severity=Severity.HIGH, confidence=0.95,
+                   india_relevance=0.6, sectors=["GOVERNMENT"], entities=Entities(cves=["CVE-2026-55502"]),
+                   raw={"vendorProject": "Microsoft", "product": "Windows", "dateAdded": at(9)[:10]}),
+            Signal(signal_type=SignalType.ADVISORY, title="CERT-In CIVN-2026-0999: Vulnerability in Fortinet FortiOS",
+                   source="CERT-In", observed_at=at(2), severity=Severity.HIGH, confidence=0.95,
+                   india_relevance=1.0, sectors=["BFSI"], annexure_categories=["vi"],
+                   raw={"reference": "CIVN-2026-0999", "subject": "Vulnerability in Fortinet FortiOS"}),
+            Signal(signal_type=SignalType.MALWARE_INFRA, title="ThreatFox: freshhost-example.in",
+                   source="abuse.ch ThreatFox", observed_at=at(1), severity=Severity.HIGH, confidence=0.75,
+                   india_relevance=0.9, tags=["threatfox", "payload_delivery", "ClickFix"],
+                   entities=Entities(domains=["freshhost-sample.in"]),
+                   raw={"id": 4242, "ioc": "freshhost-sample.in", "threat_type": "payload_delivery",
+                        "ioc_type": "domain", "malware": "", "is_compromised": False}),
+        ]
+        for i, (org, actor, sector, days_ago) in enumerate([
+                ("Pune Gears Pvt Ltd, Pune", "Akira", "MANUFACTURING", 4),
+                ("Hyderabad Clinics, Hyderabad", "Akira", "HEALTHCARE", 6),
+                ("Mumbai Brokers, Mumbai", "Qilin", "BFSI", 8)]):
+            sigs.append(Signal(signal_type=SignalType.VICTIM, title=f"{org} listed by {actor}",
+                               source="ransomware.live", observed_at=at(days_ago), severity=Severity.HIGH,
+                               confidence=0.6, india_relevance=1.0, sectors=[sector],
+                               entities=Entities(organisations=[org], actors=[actor])))
+        return sigs
+
+    def test_fresh_data_passes_qa_without_sample_text(self):
+        import pymupdf
+        from unittest import mock
+        import core.snapshot as snapshot
+        from core.iocs import export_iocs_csv
+        from core.qa import run_qa_audit
+        sigs = self._signals()
+        scored, correl = rank_sectors_multi(sigs), correlate(sigs)
+        by_source = {}
+        for sg in sigs:
+            row = by_source.setdefault((sg.source, sg.signal_type.value),
+                                       {"source": sg.source, "signal_type": sg.signal_type.value,
+                                        "n": 0, "avg_relevance": 0.0})
+            row["n"] += 1
+            row["avg_relevance"] += sg.india_relevance
+        source_summary = [dict(r, avg_relevance=r["avg_relevance"] / r["n"]) for r in by_source.values()]
+        import core.bulletin_multi as bm
+        # Curated headline cards legitimately name products; this test is about telemetry text
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(snapshot, "SNAPSHOTS_DIR", tmp), \
+                mock.patch.object(bm, "load_headline_threats", return_value=[]):
+            pdf_path = os.path.join(tmp, "fresh_2026-10-27.pdf")
+            csv_path = os.path.join(tmp, "IOCs_India_Threat_Landscape_Internal_2026-10-27.csv")
+            bm.build_multi_bulletin(output_path=pdf_path, scored_sectors=scored, signals=sigs,
+                                    correlation=correl, source_summary=source_summary, window_days=30)
+            export_iocs_csv(sigs, csv_path)
+            with mock.patch("core.qa.load_headline_threats", return_value=[]):
+                self.assertTrue(run_qa_audit(sigs, scored, correl, pdf_path, csv_path, window_days=30))
+            doc = pymupdf.open(pdf_path)
+            text = " ".join(" ".join(p.get_text().split()) for p in doc)
+            doc.close()
+            with open(csv_path, encoding="utf-8") as f:
+                csv_text = f.read()
+        for needle in self.SAMPLE_ONLY:
+            self.assertNotIn(needle, text, f"sample-only text '{needle}' leaked into a fresh-data bulletin")
+        self.assertIn("Fortinet FortiOS (CVE-2026-55501)", text)
+        self.assertIn("CIVN-2026-0999", text)
+        self.assertIn("Akira", text)
+        # A host with no recorded ASN lookup is reported as unresolved, never guessed
+        self.assertIn("freshhost-sample.in", csv_text)
+        self.assertIn("unresolved", csv_text)
+        self.assertNotIn("AS13335", csv_text)
 
 
 class TestHeadlineThreats(unittest.TestCase):

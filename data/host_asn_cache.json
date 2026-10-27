@@ -1,0 +1,236 @@
+{
+  "_about": "Hosting ASN for indicator hosts, resolved at collection time (BGP lookup, 10 Oct 2026). Hosts not listed are reported as 'unresolved', never guessed.",
+  "resolved_at": "2026-10-10",
+  "hosts": {
+    "a2ztraders.in": {
+      "asn": "AS13335 (Cloudflare)",
+      "asn_country": "US",
+      "origin_hidden": "yes"
+    },
+    "abinteriors.in": {
+      "asn": "AS13335 (Cloudflare)",
+      "asn_country": "US",
+      "origin_hidden": "yes"
+    },
+    "aimst.org.in": {
+      "asn": "AS135222 (MWNashik)",
+      "asn_country": "IN",
+      "origin_hidden": "no"
+    },
+    "arthome.in": {
+      "asn": "AS26496 (GoDaddy)",
+      "asn_country": "US",
+      "origin_hidden": "no"
+    },
+    "biopharmgroup.co.in": {
+      "asn": "AS26496 (GoDaddy)",
+      "asn_country": "US",
+      "origin_hidden": "no"
+    },
+    "cartec.in": {
+      "asn": "AS13335 (Cloudflare)",
+      "asn_country": "US",
+      "origin_hidden": "yes"
+    },
+    "d4media.in": {
+      "asn": "AS24940 (Hetzner)",
+      "asn_country": "DE",
+      "origin_hidden": "no"
+    },
+    "divyajotifoundation.in": {
+      "asn": "AS13335 (Cloudflare)",
+      "asn_country": "US",
+      "origin_hidden": "yes"
+    },
+    "exsearch.in": {
+      "asn": "AS63949 (Akamai)",
+      "asn_country": "US",
+      "origin_hidden": "no"
+    },
+    "ffsuper.in": {
+      "asn": "AS12876 (Scaleway)",
+      "asn_country": "FR",
+      "origin_hidden": "no"
+    },
+    "ficus.in": {
+      "asn": "AS46606 (Unified Layer)",
+      "asn_country": "US",
+      "origin_hidden": "no"
+    },
+    "ftc.co.in": {
+      "asn": "AS19148 (Hostkey)",
+      "asn_country": "NL",
+      "origin_hidden": "no"
+    },
+    "g4gift.in": {
+      "asn": "AS398101 (GoDaddy)",
+      "asn_country": "US",
+      "origin_hidden": "no"
+    },
+    "ganpatimovers.in": {
+      "asn": "AS13335 (Cloudflare)",
+      "asn_country": "US",
+      "origin_hidden": "yes"
+    },
+    "greengine.co.in": {
+      "asn": "AS47583 (Hostinger)",
+      "asn_country": "LT",
+      "origin_hidden": "no"
+    },
+    "gtta.co.in": {
+      "asn": "AS149573 (ServerAS)",
+      "asn_country": "IN",
+      "origin_hidden": "no"
+    },
+    "gurpreetchawla.in": {
+      "asn": "AS132335 (Leapswitch)",
+      "asn_country": "IN",
+      "origin_hidden": "no"
+    },
+    "gwsindia.in": {
+      "asn": "AS394695 (PublicDomainRegistry)",
+      "asn_country": "US",
+      "origin_hidden": "no"
+    },
+    "highskyit.in": {
+      "asn": "AS398101 (GoDaddy)",
+      "asn_country": "US",
+      "origin_hidden": "no"
+    },
+    "iplexus.in": {
+      "asn": "AS398101 (GoDaddy)",
+      "asn_country": "US",
+      "origin_hidden": "no"
+    },
+    "jeh.org.in": {
+      "asn": "AS13335 (Cloudflare)",
+      "asn_country": "US",
+      "origin_hidden": "yes"
+    },
+    "jfindia.in": {
+      "asn": "AS394695 (PublicDomainRegistry)",
+      "asn_country": "US",
+      "origin_hidden": "no"
+    },
+    "kile.kerala.gov.in": {
+      "asn": "AS47583 (Hostinger)",
+      "asn_country": "LT",
+      "origin_hidden": "no"
+    },
+    "kloudtechnology.in": {
+      "asn": "AS26496 (GoDaddy)",
+      "asn_country": "US",
+      "origin_hidden": "no"
+    },
+    "krishnavalve.in": {
+      "asn": "AS48254 (InterNetX)",
+      "asn_country": "DE",
+      "origin_hidden": "no"
+    },
+    "letsstyle.in": {
+      "asn": "AS26496 (GoDaddy)",
+      "asn_country": "US",
+      "origin_hidden": "no"
+    },
+    "lightoftruth.in": {
+      "asn": "AS46606 (Unified Layer)",
+      "asn_country": "US",
+      "origin_hidden": "no"
+    },
+    "livo.in": {
+      "asn": "AS26496 (GoDaddy)",
+      "asn_country": "US",
+      "origin_hidden": "no"
+    },
+    "lorven.in": {
+      "asn": "AS26496 (GoDaddy)",
+      "asn_country": "US",
+      "origin_hidden": "no"
+    },
+    "macoavell.in": {
+      "asn": "AS22611 (InMotion)",
+      "asn_country": "US",
+      "origin_hidden": "no"
+    },
+    "magnatemedia.co.in": {
+      "asn": "AS398101 (GoDaddy)",
+      "asn_country": "US",
+      "origin_hidden": "no"
+    },
+    "makerman.in": {
+      "asn": "AS31898 (Oracle)",
+      "asn_country": "US",
+      "origin_hidden": "no"
+    },
+    "mdfs.co.in": {
+      "asn": "AS398101 (GoDaddy)",
+      "asn_country": "US",
+      "origin_hidden": "no"
+    },
+    "nostc.in": {
+      "asn": "AS46606 (Unified Layer)",
+      "asn_country": "US",
+      "origin_hidden": "no"
+    },
+    "nutsplus.co.in": {
+      "asn": "AS31898 (Oracle)",
+      "asn_country": "US",
+      "origin_hidden": "no"
+    },
+    "prognosisinfo.in": {
+      "asn": "AS13335 (Cloudflare)",
+      "asn_country": "US",
+      "origin_hidden": "yes"
+    },
+    "renewcell.co.in": {
+      "asn": "AS26496 (GoDaddy)",
+      "asn_country": "US",
+      "origin_hidden": "no"
+    },
+    "rias.org.in": {
+      "asn": "AS398101 (GoDaddy)",
+      "asn_country": "US",
+      "origin_hidden": "no"
+    },
+    "rvrpro.in": {
+      "asn": "AS13335 (Cloudflare)",
+      "asn_country": "US",
+      "origin_hidden": "yes"
+    },
+    "s4w.in": {
+      "asn": "AS13335 (Cloudflare)",
+      "asn_country": "US",
+      "origin_hidden": "yes"
+    },
+    "squarerealty.in": {
+      "asn": "AS47583 (Hostinger)",
+      "asn_country": "LT",
+      "origin_hidden": "no"
+    },
+    "theinstaapp.com.in": {
+      "asn": "AS13335 (Cloudflare)",
+      "asn_country": "US",
+      "origin_hidden": "yes"
+    },
+    "vijayateacherscollege.ac.in": {
+      "asn": "AS31898 (Oracle)",
+      "asn_country": "US",
+      "origin_hidden": "no"
+    },
+    "virazofurniture.in": {
+      "asn": "AS31898 (Oracle)",
+      "asn_country": "US",
+      "origin_hidden": "no"
+    },
+    "windsonchem.co.in": {
+      "asn": "AS204800 (Hostinger)",
+      "asn_country": "LT",
+      "origin_hidden": "no"
+    },
+    "woofbuddies.in": {
+      "asn": "AS31898 (Oracle)",
+      "asn_country": "US",
+      "origin_hidden": "no"
+    }
+  }
+}

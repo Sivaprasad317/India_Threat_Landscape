@@ -11,6 +11,12 @@ Infrastructure under Section 70A of the IT Act, 2000 (NCIIPC).
 import re
 from typing import Dict, List, Optional, Tuple
 
+from .overrides import entity_override
+
+# Institution words that identify an education body from its name alone
+_EDUCATION_NAME = re.compile(
+    r"\b(university|college|school|iit|indian institute of technology)\b", re.IGNORECASE)
+
 # ---------------------------------------------------------------------------
 # Sector definitions
 #
@@ -274,22 +280,11 @@ def classify_sector(activity: str = "", victim_name: str = "",
     distinct keywords hit, capped at 0.85, because keyword inference on a
     company name is inherently weaker evidence than a declared label.
     """
-    v_low = (victim_name or "").lower()
-    # Explicit entity overrides for prominent Indian institutions and verified victims
-    if any(k in v_low for k in ("roorkee", "iit", "indian institute of technology", "manipal", "university", "vit.ac.in", "sai.org.in", "vedantaainstitute", "college", "school")):
-        return "EDUCATION", 0.98
-    if any(k in v_low for k in ("jpmgroup", "jay packaging", "raajratna", "labindia", "simplexengg", "simplex engineering")):
-        return "MANUFACTURING", 0.98
-    if any(k in v_low for k in ("majestic holidays", "majestic", "praveg")):
-        return "RETAIL_ECOM", 0.98
-    if any(k in v_low for k in ("ags cinemas", "ags")):
-        return "MEDIA", 0.98
-    if "shalina" in v_low:
-        return "PHARMA", 0.98
-    if "licindia" in v_low:
-        return "UNCLASSIFIED", 0.0
-    if "incor" in v_low:
-        return "REAL_ESTATE", 0.98
+    override = entity_override(victim_name)
+    if override and override.get("sector"):
+        return override["sector"], (0.0 if override["sector"] == "UNCLASSIFIED" else 0.98)
+    if _EDUCATION_NAME.search(victim_name or ""):
+        return "EDUCATION", 0.9
 
     label = (activity or "").strip().lower()
     if label in FEED_LABEL_MAP:
@@ -382,59 +377,8 @@ def all_sectors() -> List[str]:
 
 
 def clean_victim_name(name: str) -> str:
+    """Display name for a victim, from data/entity_overrides.json when reviewed."""
     name = (name or "").strip()
-    low = name.lower()
-    if "simplexengg" in low or low == "simplex engineering":
-        return "Simplex Engineering Works Pvt. Ltd."
-    if "raajratna" in low:
-        return "Raajratna Metal Industries"
-    if "sai.org.in" in low:
-        return "Shri Saibaba Sansthan Trust"
-    if "vit.ac.in" in low:
-        return "Vellore Institute of Technology (VIT)"
-    if "swadeshicipl" in low:
-        return "Swadeshi Commercial Co. Ltd"
-    if "vedantaa" in low:
-        return "Vedanta Institute"
-    if "southsign" in low:
-        return "South Sign Systems"
-    if "seashellhospital" in low:
-        return "Sea Shell Hospital"
-    if "karkinos" in low:
-        return "Karkinos Healthcare"
-    if "jindallife" in low:
-        return "Jindal Life Sciences"
-    if "shalina" in low:
-        return "Shalina Healthcare"
-    if "labindia" in low:
-        return "Labindia Instruments Pvt. Ltd."
-    if "qcpl" in low:
-        return "Quality Control Products Ltd (QCPL)"
-    if "jpmgroup" in low:
-        return "JPM Group (Jay Packaging)"
-    if "atomberg" in low:
-        return "Atomberg Technologies"
-    if "9altitudes" in low:
-        return "9altitudes India"
-    if "vi***in" in low:
-        return "vi***in (Masked Logistics Entity)"
-    if low == "licindia":
-        return "Licindia (Unverified Domain Claim)"
-    if low == "indic":
-        return "Indic Inspirations"
-    if low == "sancity":
-        return "Sancity Developers"
-    if "bonjour" in low:
-        return "Bonjour Group"
-    if "gindre" in low:
-        return "Gindre India Pvt. Ltd."
-    if "seasia" in low:
-        return "Seasia Infotech Pvt. Ltd."
-    if "university of delhi" in low or "(du)" in low:
-        return "University of Delhi (DU)"
-    if "manipal" in low:
-        return "Manipal Academy of Higher Education"
-    if "iit roorkee" in low:
-        return "IIT Roorkee"
-    return name
+    override = entity_override(name)
+    return override["name"] if override and override.get("name") else name
 
