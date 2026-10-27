@@ -1,5 +1,7 @@
 # India Threat Landscape Intelligence
 
+[![CI](https://github.com/Sivaprasad317/India_Threat_Landscape/actions/workflows/ci.yml/badge.svg)](https://github.com/Sivaprasad317/India_Threat_Landscape/actions/workflows/ci.yml)
+
 Multi-source threat intelligence for Indian organisations. Collects from
 ransomware leak sites, exploited-vulnerability catalogues, malware
 infrastructure feeds, certificate transparency, phishing feeds, CERT-In,
@@ -19,8 +21,8 @@ python main.py sources
 
 `sources` shows which collectors can run now and which need a key.
 
-**Ten collectors work with no key at all.** Get the free abuse.ch and OTX
-keys and you are at fourteen; Shodan (paid) makes fifteen.
+**Eleven collectors work with no key at all.** Get the free abuse.ch and OTX
+keys and you are at fifteen; Shodan (paid) makes sixteen.
 
 ---
 
@@ -38,6 +40,7 @@ keys and you are at fourteen; Shodan (paid) makes fifteen.
 | `hacktivism` | Hacktivist claims against Indian targets | none |
 | `leak_tracker` | Your dark web forum observations | none |
 | `security_news` | Security news headlines naming India or high-impact events | none |
+| `india_threat_tracker` | APT and UPI-smishing campaigns from [India Threat Tracker](https://github.com/sohankanna/india-threat-tracker) (CC BY 4.0, Sohan Kanna) | none |
 | `threatfox` | Malware C2 on Indian infrastructure | abuse.ch (free) |
 | `urlhaus` | Payload URLs on Indian hosts | abuse.ch (free) |
 | `malwarebazaar` | Samples from India-targeting families | abuse.ch (free) |
@@ -62,16 +65,21 @@ python main.py pulse --days 7             # 1-page executive brief
 python main.py certin --incident "..." --sector BFSI
 python main.py clock --noticed "2026-09-05 08:30"
 python main.py stats
+python main.py health                     # feed freshness and failures
+python main.py validate                   # check the data files you edit
+python main.py backtest --write docs/BACKTEST.md
+python main.py export --format both --public   # STIX 2.1 + MISP JSON
 ```
 
-Run `collect` daily, `bulletin` weekly.
+Run `collect` daily, `bulletin` weekly. `health` before a bulletin tells you
+whether any feed is failing or stale; the bulletin repeats it on the cover.
 
 ### What the bulletin contains
 
 | Section | What it covers |
 |---|---|
 | Cover | Key numbers, a "Bottom line" summary, sector risk chart, contents |
-| 01 Threats in Focus | Headline incidents (e.g. PHP2Shell, LiteLLM, SBI leak): what happened, why it matters for India, what to do, sources; plus recent news |
+| 01 Threats in Focus | The month's headline incidents: an at-a-glance index, full cards (what happened, why it matters for India, what to do, sources) for Critical and India-direct incidents, a compact table for the rest, plus recent news |
 | 02 Executive Summary | Analytical judgements and a 7-day action plan (headline actions first) |
 | 03-09 | Regional hotspots, adversaries, sector scores, sector detail, correlation, priority signals, extortion telemetry |
 | 10 | CERT-In Directions mapping (internal) or hardening guidance (public) |
@@ -95,54 +103,61 @@ set `SCORING_ANCHOR` in `.env` to an ISO timestamp (naive = IST) or `now`.
 
 ---
 
-## Why multiple sources changes the answer
+## How the score is built, and how far to trust it
 
-The single-source version scored on victim counts. That misses the sector
-that is *about* to have victims.
-
-In testing, Banking ranked first on **one** victim — because it also carried
-three actively exploited CVEs in banking technology, four lookalike domains
-impersonating Indian banks, a SOVA banking-trojan C2, and a data-sale listing
-on BreachForums. Six sources agreeing. The victim-only model ranked it fourth.
-
-Government scored zero under the old model — no victims. Under this one it
-scores on an exploited Fortinet CVE plus an Income Tax lookalike domain. That
-is a sector with the preconditions in place and no incident yet, which is
-exactly when advice is worth giving.
-
-### Scoring components
+Each sector gets a 0-100 score from six components:
 
 | Component | Weight | Measures |
 |---|---|---|
-| Impact | 30% | Confirmed victims and data-sale listings |
+| Impact | 30% | Named victims and data-sale listings |
 | Exploit | 20% | Actively exploited CVEs in sector technology |
 | Infra | 15% | Malware C2, phishing, lookalike domains |
-| Pressure | 10% | Hacktivist claims, campaign reporting |
-| Exposure | 10% | Aggregate attack surface on Indian networks |
 | Criticality | 15% | Section 70A designation |
+| Pressure | 10% | Hacktivist claims, campaign reporting, advisories |
+| Exposure | 10% | Aggregate attack surface on Indian networks |
 
-Every signal carries its own `india_relevance` and `confidence`, so an
-unverified hacktivist claim contributes a fraction of what a corroborated
-breach does. Signals decay with a 21-day half-life.
+Every signal is weighted by its own `confidence` and `india_relevance` and
+decays with a 21-day half-life. Scores are relative to the window, not
+probabilities. The full method is in [METHODOLOGY.md](METHODOLOGY.md).
+
+**Backtest.** `python main.py backtest` scores sectors at past dates using
+only data seen by then and checks the ranking against the next 30 days of
+leak-site victims. On the bundled data (24 monthly anchors):
+
+| Ranking | Spearman rho | Next-month victims in its top 3 |
+|---|---|---|
+| This model | 0.53 | 48% |
+| This model without criticality | 0.61 | 59% |
+| Ranking by recent victims only | 0.62 | 59% |
+| Random | 0.00 | 21% |
+
+Rankings are well above random, but the criticality weight costs predictive
+agreement: it deliberately lifts critical sectors that see fewer leak-site
+postings. The exploit, infra, pressure and exposure components have no
+stored history before late August 2026 and are not yet tested; the daily
+scheduled run builds that history. Details and a recommendation:
+[METHODOLOGY.md](METHODOLOGY.md#7-has-the-score-been-tested),
+[docs/BACKTEST.md](docs/BACKTEST.md).
 
 ---
 
 ## Correlation
 
-The part a single feed cannot produce. Three passes:
+Matches between feeds are graded, and every one carries its evidence:
 
-**Shared artefacts** — the same CVE, domain or organisation appearing in
-signals from different sources. In testing this caught CVE-2026-21042 named
-by both CISA KEV and a CERT-In advisory, and Sundaram Finance appearing both
-as a ransomware victim and as a BreachForums data listing. Corroborated
-signals get a confidence uplift, capped at 0.97.
+- **Exact artefact**: the same CVE, hash, domain, IP or URL.
+- **Same organisation**: the same named organisation after normalisation.
+- **Name only**: just an actor or malware-family name in common. Listed as
+  a possible link, never counted.
 
-**Actor chains** — a group named on a leak site also showing up in malware
-infrastructure or hacktivist claims.
+A match is **independent** only when its feeds come from different families
+(CISA KEV and NVD share CVE data; ransomware.live and ransomlook.io scrape
+the same leak sites; the abuse.ch feeds share an operator). Only independent
+matches raise confidence (x1.15, capped at 0.85, once per signal).
 
-**Exploit-to-victim links** — an actively exploited CVE affecting a sector
-that is concurrently seeing victims. A known way in, plus proof it is being
-used against that sector now. This is the most actionable output in the tool.
+**Exploit-to-victim links** show an actively exploited CVE in a sector's
+technology while that sector is also seeing victims: a known way in, not
+proof it was the way in.
 
 ---
 
@@ -192,8 +207,11 @@ the 7-day action plan.
  "sources": [{"name": "Recorded Future", "url": "https://..."}]}
 ```
 
-`severity` is Critical, High, Medium or Low. `keywords` stop the same story
-being repeated in the news list. Entries with missing fields are skipped with a
+`severity` is Critical, High, Medium or Low. Set `"india_direct": true` when
+the incident hit an Indian organisation or came from CERT-In; those entries and
+anything Critical get a full card, and the rest go in a compact table (add an
+optional one-line `"brief"` for it). `keywords` stop the same story being
+repeated in the news list. Entries with missing fields are skipped with a
 warning.
 
 **`security_news` collector**: reads RSS feeds (The Hacker News,
@@ -234,6 +252,53 @@ into bulletin content.
 
 ---
 
+## Data files you maintain
+
+| File | What it holds |
+|---|---|
+| `data/headline_threats.json` | Threats in Focus entries, with sources |
+| `data/entity_overrides.json` | Reviewed corrections for named organisations: display name, sector, state, with a reason and date. The code never guesses a state; unknown stays "Location Unresolved" |
+| `data/hacktivist_claims.json` | Hacktivist claims from your Telegram and X monitoring |
+| `data/leak_observations.json` | Dark web forum observations |
+| `data/host_asn_cache.json` | Hosting ASN lookups for IOC hosts. Hosts not listed are reported as `unresolved` |
+
+Run `python main.py validate` after editing; CI runs it on every push.
+
+---
+
+## Running it on a schedule
+
+**GitHub Actions (recommended).** `.github/workflows/scheduled-run.yml` runs
+every day at 06:47 IST: it collects every feed, builds the public (TLP:CLEAR)
+bulletin and IOC sheet, uploads them as a run artifact (Actions tab, open the
+run, Artifacts), and fails, so GitHub emails you, when a feed is failing or
+stale. The signal database is carried between runs in the Actions cache. Add
+`ABUSECH_AUTH_KEY` and `OTX_API_KEY` under Settings, Secrets and variables,
+Actions to enable those feeds. Scheduled workflows run from the `main` branch.
+
+**Windows Task Scheduler.** Create a daily task that runs, in the project
+folder:
+
+```powershell
+python main.py collect; python main.py health
+```
+
+`.github/workflows/ci.yml` runs the tests, validates the data files and
+builds a sample bulletin on every push (Python 3.10 and 3.12).
+
+---
+
+## Exports for CTI platforms
+
+`python main.py export --format both [--public]` writes the IOC sheet as a
+STIX 2.1 bundle and a MISP event to `exports/`. Roles, recommended actions,
+confidence and 14-day expiry match the CSV; IDs are stable across runs so
+platforms update rather than duplicate. Public edition is marked TLP:WHITE
+(STIX 2.1's built-in marking, the TLP 2.0 CLEAR equivalent) and `tlp:clear`
+in MISP; internal is TLP:GREEN.
+
+---
+
 ## Adding a source
 
 Create a module in `core/collectors/`, subclass `BaseCollector`, decorate
@@ -254,4 +319,6 @@ that a specific Indian organisation is unpatched. Sector attribution from
 company names is imperfect. Small signal counts move scores noticeably, so
 early bulletins are directional rather than precise.
 
-Scores are relative to observed activity in the window, not probabilities.
+Scores are relative to observed activity in the window, not probabilities,
+and so far only the impact and criticality parts have been backtested (see
+[METHODOLOGY.md](METHODOLOGY.md)).

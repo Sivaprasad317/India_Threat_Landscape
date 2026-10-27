@@ -20,6 +20,7 @@ text layer.
 import os
 import re
 import sqlite3
+import textwrap
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -41,8 +42,12 @@ from .certin import (ANNEXURE_I, DIRECTION_REF, DIRECTION_URL, DISCLAIMER,
                      REPORTING_EMAIL, REPORTING_PHONE, obligations_summary)
 from .database import get_intel_items
 from .geo_india import classify_state, render_official_india_map, STATE_GEO_COORDS
-from .headlines import format_date, headline_keywords, load_headline_threats, news_watch
-from .iocs import export_iocs_csv, get_ioc_summary
+from .overrides import entity_override
+from .health import problems as health_problems, source_health
+from .headlines import (brief_text, format_date, headline_keywords, load_headline_threats,
+                        news_watch, split_headlines)
+from .iocs import export_iocs_csv, extract_iocs, get_ioc_summary
+from . import report_facts as rf
 from .scoring_multi import DEFAULT_ANCHOR_DT, SCORING_VERSION, assign_risk_band
 from .sectors import (SECTORS, clean_victim_name as _clean_victim_name,
                       sector_label, short_sector_label)
@@ -126,68 +131,11 @@ def _normalize_actor(name: str) -> str:
     return known.get(name.lower(), name.title())
 
 
-def _clean_victim_name(name: str) -> str:
-    name = (name or "").strip()
-    low = name.lower()
-    if "simplexengg" in low or low == "simplex engineering":
-        return "Simplex Engineering Works Pvt. Ltd."
-    if "raajratna" in low:
-        return "Raajratna Metal Industries"
-    if "sai.org.in" in low:
-        return "Shri Saibaba Sansthan Trust"
-    if "vit.ac.in" in low:
-        return "Vellore Institute of Technology (VIT)"
-    if "swadeshicipl" in low:
-        return "Swadeshi Commercial Co. Ltd"
-    if "vedantaa" in low:
-        return "Vedanta Institute"
-    if "southsign" in low:
-        return "South Sign Systems"
-    if "seashellhospital" in low:
-        return "Sea Shell Hospital"
-    if "karkinos" in low:
-        return "Karkinos Healthcare"
-    if "jindallife" in low:
-        return "Jindal Life Sciences"
-    if "shalina" in low:
-        return "Shalina Healthcare"
-    if "labindia" in low:
-        return "Labindia Instruments Pvt. Ltd."
-    if "qcpl" in low:
-        return "Quality Control Products Ltd (QCPL)"
-    if "jpmgroup" in low:
-        return "JPM Group (Jay Packaging)"
-    if "atomberg" in low:
-        return "Atomberg Technologies"
-    if "9altitudes" in low:
-        return "9altitudes India"
-    if "vi***in" in low:
-        return "vi***in (Masked Logistics Entity)"
-    if low == "licindia":
-        return "Licindia (Unverified Domain Claim)"
-    if low == "indic":
-        return "Indic Inspirations"
-    if low == "sancity":
-        return "Sancity Developers"
-    if "bonjour" in low:
-        return "Bonjour Group"
-    if "gindre" in low:
-        return "Gindre India Pvt. Ltd."
-    if "seasia" in low:
-        return "Seasia Infotech Pvt. Ltd."
-    if "university of delhi" in low or "(du)" in low:
-        return "University of Delhi (DU)"
-    if "manipal" in low:
-        return "Manipal Academy of Higher Education"
-    if "iit roorkee" in low:
-        return "IIT Roorkee"
-    return name
-
-
-PUBLIC_CONFIRMED_ENTITIES = {
-    "manipal academy of higher education",
-    "iit roorkee",
-}
+def _join_and(items: List[str]) -> str:
+    items = [i for i in items if i]
+    if len(items) <= 1:
+        return "".join(items)
+    return f"{', '.join(items[:-1])} and {items[-1]}"
 
 
 def format_truncated_list(items: List[str], max_items: int = 5) -> str:
@@ -704,23 +652,15 @@ def extract_victim_attributions(signals: List[Signal]) -> Tuple[List[Dict], int,
             actor = "Unattributed"
 
         st_name = classify_state(clean_org, s.description)
-        raw_low = raw_org.strip().lower()
-        if "licindia" in raw_low:
-            sec = "Unclassified / Unverified"
-        elif "shalina" in raw_low:
-            sec = sector_label("PHARMA")
-        elif "majestic" in raw_low or "praveg" in raw_low:
-            sec = "Retail & E-commerce"
+        override = entity_override(raw_org) or entity_override(clean_org)
+        if override and override.get("sector_label"):
+            sec = override["sector_label"]
+        elif override and override.get("sector"):
+            sec = sector_label(override["sector"])
         else:
             sec = sector_label(s.sectors[0]) if s.sectors else "Unclassified"
         incident_type = ("Data for Sale" if s.signal_type == SignalType.DATA_LEAK
                          else "Ransomware Leak")
-
-        is_res = (
-            ((raw_org.strip() != clean_org.strip()) or any(x in raw_low for x in [".in", ".com", ".net", ".org", "part0", "mo9m"]))
-            and ("***" not in raw_org)
-            and ("licindia" not in raw_low)
-        )
 
         if norm_key not in by_org:
             by_org[norm_key] = {
@@ -732,15 +672,12 @@ def extract_victim_attributions(signals: List[Signal]) -> Tuple[List[Dict], int,
                 "date": (s.observed_at or "")[:10],
                 "sources": {s.source},
                 "postings": 1,
-                "is_resolved": is_res,
             }
         else:
             if actor != "Unattributed":
                 by_org[norm_key]["actors"].add(actor)
             by_org[norm_key]["sources"].add(s.source)
             by_org[norm_key]["postings"] += 1
-            if is_res:
-                by_org[norm_key]["is_resolved"] = True
             if s.observed_at and s.observed_at[:10] > by_org[norm_key]["date"]:
                 by_org[norm_key]["date"] = s.observed_at[:10]
 
@@ -757,11 +694,120 @@ def extract_victim_attributions(signals: List[Signal]) -> Tuple[List[Dict], int,
             "sources": sorted(item["sources"]),
             "postings": item["postings"],
             "corroborated": len(item["sources"]) >= 2,
-            "is_resolved": item.get("is_resolved", False),
         })
 
     out.sort(key=lambda x: (x["date"], x["victim"]), reverse=True)
     return out, total_postings, len(out)
+
+
+def _backtest_limit_text() -> str:
+    """One-line backtest result for the limitations list, computed from the database."""
+    try:
+        from .backtest import run_backtest
+        result = run_backtest()
+    except sqlite3.Error:
+        result = {"anchors": []}
+    n = len(result.get("anchors", []))
+    if not n:
+        return ("<b>Score Validation:</b> Not enough leak-site history to backtest the sector ranking yet; "
+                "treat scores as unvalidated.")
+    s = result["summary"]
+    return (f"<b>Score Validation:</b> Backtested at {n} past dates against the next 30 days of leak-site victims, "
+            f"the ranking scored a mean Spearman correlation of {s['model']['spearman']} versus "
+            f"{s['recent_victims']['spearman']} for simply ranking by recent victims and 0 for random. "
+            f"Exploit, infrastructure, pressure and exposure components are not yet backtested for lack of history. "
+            f"Method and results: METHODOLOGY.md.")
+
+
+def _manual_feed_note(signals: List[Signal], window_days: int) -> str:
+    """What the hand-maintained dark-web and hacktivist feeds contributed."""
+    leaks = sum(1 for s in signals if s.signal_type == SignalType.DATA_LEAK)
+    hackt = sum(1 for s in signals if s.signal_type == SignalType.HACKTIVISM)
+    if not leaks and not hackt:
+        return (f"No dark web forum or hacktivist claim observations were logged for this {window_days}-day period "
+                f"(data/leak_observations.json and data/hacktivist_claims.json are analyst-maintained).")
+    return (f"Analyst-logged observations this period: {leaks} dark web data-sale listing{'s' if leaks != 1 else ''} "
+            f"and {hackt} hacktivist claim{'s' if hackt != 1 else ''}.")
+
+
+def _technique_sentence(examples: List[Dict]) -> str:
+    if not examples:
+        return ""
+    parts = [f"{e['technique']} ({e['count']} indicator{'s' if e['count'] != 1 else ''}, e.g. {e['example']})"
+             for e in examples]
+    return f"Observed delivery techniques: {_join_and(parts)}. "
+
+
+def _correlation_summary(correlation: Dict) -> str:
+    shared = correlation.get("shared_artefacts", [])
+    n_sig = correlation.get("corroborated_count", 0)
+    n_art = correlation.get("shared_artefacts_count", len(shared))
+    n_ind = correlation.get("independent_artefacts_count", 0)
+    n_weak = correlation.get("possible_links_count", 0)
+    if not shared and not n_weak:
+        return "No artefact (CVE, domain, IP, hash or organisation) appeared in more than one feed during the window."
+    kinds = Counter(item["match"] for item in shared)
+    kind_str = "; ".join(f"{cnt} {kind}" for kind, cnt in kinds.most_common())
+    text = (f"Cross-source telemetry reconciles <b>{n_sig} signals across {n_art} shared artefacts</b>"
+            f"{' (' + _esc(kind_str) + ')' if kind_str else ''}. "
+            f"<b>{n_ind} of {n_art}</b> come from independent feed families; the rest were seen by feeds that share an upstream "
+            "(CISA KEV and NVD share CVE data; ransomware.live and ransomlook.io scrape the same leak sites; the abuse.ch feeds share "
+            "one operator), so they confirm the record exists but not that it is true. Only independent matches raise confidence.")
+    if n_weak:
+        text += (f" {n_weak} further match{'es' if n_weak != 1 else ''} rest only on a shared actor or malware-family name; "
+                 "these are listed as possible links and not counted.")
+    return text
+
+
+def _actor_activity(signals: List[Signal]) -> Dict[str, Dict]:
+    """Per actor: organisations, postings, posting dates and feeds."""
+    out: Dict[str, Dict] = defaultdict(lambda: {"orgs": set(), "postings": 0, "dates": set(), "sources": set()})
+    for s in signals:
+        if s.signal_type.value in ("victim", "data_leak") and s.entities.actors:
+            raw_org = s.entities.organisations[0] if s.entities.organisations else s.title
+            org = _clean_victim_name(raw_org).lower()
+            for a in s.entities.actors:
+                act = _normalize_actor(a)
+                if act == "Unattributed":
+                    continue
+                rec = out[act]
+                rec["orgs"].add(org)
+                rec["postings"] += 1
+                rec["sources"].add(s.source)
+                if s.observed_at:
+                    rec["dates"].add(s.observed_at[:10])
+    return out
+
+
+def _actor_notes(signals: List[Signal]) -> Dict[str, str]:
+    """Short chart notes explaining why an actor's postings differ from its organisations."""
+    notes = {}
+    for act, rec in _actor_activity(signals).items():
+        if len(rec["orgs"]) >= 3 and len(rec["dates"]) == 1:
+            d = next(iter(rec["dates"]))
+            notes[act] = f" ({datetime.fromisoformat(d).strftime('%d-%b')} wave)"
+        elif rec["postings"] > len(rec["orgs"]) and len(rec["sources"]) > 1:
+            notes[act] = " (multi-feed)"
+        elif rec["postings"] > len(rec["orgs"]):
+            notes[act] = " (repeat postings)"
+    return notes
+
+
+def _actor_chart_note(signals: List[Signal], unique_orgs: int, total_postings: int) -> str:
+    activity = _actor_activity(signals)
+    ranked = sorted(activity.items(), key=lambda kv: (-len(kv[1]["orgs"]), -kv[1]["postings"]))
+    parts = []
+    if len(ranked) > 7:
+        parts.append(f"Top 7 actors shown individually; {len(ranked) - 7} remaining syndicates aggregated into Others.")
+    repeats = [(a, r) for a, r in ranked if r["postings"] > len(r["orgs"])][:3]
+    for act, rec in repeats:
+        n_org = len(rec["orgs"])
+        why = "listed on more than one feed" if len(rec["sources"]) > 1 else "posted more than once"
+        parts.append(f"{act}: {rec['postings']} postings for {n_org} organisation{'s' if n_org != 1 else ''} ({why}).")
+    if any(len(r["sources"]) > 1 for _, r in ranked):
+        parts.append("Note: ransomware.live and ransomlook.io share an upstream scraper source.")
+    parts.append(f"All {unique_orgs} unique entities and {total_postings} postings accounted for (100.0%).")
+    return "<i>* Note: " + " ".join(_esc(p) for p in parts) + "</i>"
 
 
 def create_threat_actors_bar_chart(signals: List[Signal], width: float = 178 * mm,
@@ -800,6 +846,7 @@ def create_threat_actors_bar_chart(signals: List[Signal], width: float = 178 * m
     )
     top_actors = all_ranked[:7]
     other_actors = all_ranked[7:]
+    actor_notes = _actor_notes(signals)
 
     total_unique_orgs = len({o for orgs in actor_orgs.values() for o in orgs}) or 1
     max_val = top_actors[0][1] if top_actors else 1
@@ -833,13 +880,7 @@ def create_threat_actors_bar_chart(signals: List[Signal], width: float = 178 * m
         col = GANG_COLORS[idx % len(GANG_COLORS)]
         pct = (org_cnt / float(total_unique_orgs)) * 100
 
-        campaign_note = ""
-        if actor == "Clop":
-            campaign_note = " (12-Aug wave)"
-        elif actor == "Eclipse":
-            campaign_note = " (subdomains)"
-        elif actor == "UmBra":
-            campaign_note = " (multi-feed)"
+        campaign_note = actor_notes.get(actor, "")
 
         lbl_text = f"{idx+1}. {actor}{campaign_note}" if not actor.startswith("Others") else f"{idx+1}. {actor}"
         d.add(String(bar_x, cur_y + 1.2, lbl_text,
@@ -866,8 +907,8 @@ def create_threat_actors_bar_chart(signals: List[Signal], width: float = 178 * m
 def create_targeted_tech_chart(signals: List[Signal], width: float = 178 * mm,
                                height: float = 108) -> Drawing:
     """
-    Renders a bar chart of enterprise technology vendors and products targeted in India.
-    Harmonized with perimeter and advisory vectors (Citrix, Cisco, MikroTik, SonicWall, etc.).
+    Bar chart of the vendors and products with the most CISA KEV CVEs in the
+    window, edge devices in red.
     """
     d = Drawing(width, height)
     d.add(Rect(0, 0, width, height, rx=4, ry=4,
@@ -880,16 +921,19 @@ def create_targeted_tech_chart(signals: List[Signal], width: float = 178 * mm,
                  fontName="Helvetica", fontSize=6.5,
                  fillColor=colors.HexColor("#666666")))
 
-    tech_vendors = [
-        ("Citrix NetScaler (ADC / Gateway)", 4, "Edge Gateway / Memory Bounds", colors.HexColor("#791F1F")),
-        ("Cisco Products (SD-WAN / ISE / Email)", 3, "Network Infrastructure / Injection", colors.HexColor("#C0392B")),
-        ("MikroTik RouterOS", 3, "Perimeter Router / Authentication", colors.HexColor("#C0392B")),
-        ("SonicWall SMA1000 Appliances", 2, "SSL VPN / Command Injection", colors.HexColor("#D35400")),
-        ("Microsoft SharePoint Server", 2, "Collaboration / Code Injection", colors.HexColor("#D35400")),
-        ("Check Point Security Gateways", 2, "Firewall / Cert Validation", colors.HexColor("#E67E22")),
-        ("Fortinet FortiMail Gateway", 1, "Email Gateway / Path Traversal", colors.HexColor("#1F618D")),
-        ("Apache Struts Application Server", 1, "Web App / Remote Execution", colors.HexColor("#2980B9")),
-    ]
+    groups = rf.kev_by_product(signals)[:8]
+    max_cves = max((g["count"] for g in groups), default=1)
+    edge_cols = [colors.HexColor(c) for c in ("#791F1F", "#C0392B", "#D35400", "#E67E22")]
+    other_cols = [colors.HexColor(c) for c in ("#1F618D", "#2980B9", "#5B7FA6", "#7F9CBF")]
+    tech_vendors = []
+    for g in groups:
+        palette = edge_cols if g["edge"] else other_cols
+        rank = sum(1 for x in tech_vendors if x[3] in palette)
+        tech_vendors.append((g["label"][:44], g["count"], g["edge"], palette[min(rank, 3)]))
+    if not tech_vendors:
+        d.add(String(12, height - 34, "No CISA KEV entries in this window.", fontName="Helvetica",
+                     fontSize=7, fillColor=MUTED))
+        return d
 
     bar_x = 12
     label_w = 145
@@ -899,13 +943,15 @@ def create_targeted_tech_chart(signals: List[Signal], width: float = 178 * mm,
     bar_gap = 3.2
     cur_y = height - 30
 
-    for name, cve_cnt, desc, col in tech_vendors:
-        d.add(String(bar_x, cur_y + 1.2, name, fontName="Helvetica-Bold", fontSize=6.5, fillColor=colors.HexColor("#222222")))
+    for name, cve_cnt, is_edge, col in tech_vendors:
+        d.add(String(bar_x, cur_y + 1.2, name + (" (edge)" if is_edge else ""), fontName="Helvetica-Bold",
+                     fontSize=6.5, fillColor=colors.HexColor("#222222")))
         tx = bar_x + label_w
         d.add(Rect(tx, cur_y, bar_track_w, bar_h, rx=1.5, ry=1.5, fillColor=colors.HexColor("#EAE8E1"), strokeColor=None))
-        fw = max(6, min(bar_track_w, (cve_cnt / 4.0) * bar_track_w))
+        fw = max(6, min(bar_track_w, (cve_cnt / float(max_cves)) * bar_track_w))
         d.add(Rect(tx, cur_y, fw, bar_h, rx=1.5, ry=1.5, fillColor=col, strokeColor=None))
-        d.add(String(tx + bar_track_w + 6, cur_y + 1.2, f"{cve_cnt} CVEs", fontName="Helvetica-Bold", fontSize=6.2, fillColor=col))
+        d.add(String(tx + bar_track_w + 6, cur_y + 1.2, f"{cve_cnt} CVE{'s' if cve_cnt != 1 else ''}",
+                     fontName="Helvetica-Bold", fontSize=6.2, fillColor=col))
         cur_y -= (bar_h + bar_gap)
 
     return d
@@ -919,11 +965,12 @@ def compute_weekly_buckets(start_date: Optional[object] = None,
     The final bucket is labeled by the days that contain data (data_end_date or end_date).
     Returns list of bucket dicts with label, dates, start_iso, end_iso, days, is_partial.
     """
-    if not start_date or not end_date:
-        start_date = datetime(2026, 8, 12).date()
+    if not end_date:
         end_date = window_end_date()
+    if not start_date:
+        start_date = end_date - timedelta(days=60)
     if not data_end_date:
-        data_end_date = datetime(2026, 10, 10).date()
+        data_end_date = end_date
 
     cur = start_date
     slots = []
@@ -963,8 +1010,8 @@ def create_timeline_activity_chart(signals: List[Signal],
                                    width: float = 178 * mm,
                                    height: float = 95) -> Drawing:
     """
-    Renders a weekly threat activity volume trend chart across the 60-day window,
-    accounting for 100% of signals (263 total signals and 49 victim postings).
+    Renders a weekly threat activity volume trend chart across the window,
+    accounting for 100% of signals and victim postings.
     Buckets are dynamically derived from start_date to end_date.
     """
     d = Drawing(width, height)
@@ -975,8 +1022,8 @@ def create_timeline_activity_chart(signals: List[Signal],
                  fontName="Helvetica-Bold", fontSize=8.5,
                  fillColor=colors.HexColor("#1A1A1A")))
 
-    max_sig_date = max((s.observed_at[:10] for s in signals if s.observed_at), default="2026-10-10")
-    data_end_date = datetime.fromisoformat(max_sig_date).date()
+    max_sig_date = max((s.observed_at[:10] for s in signals if s.observed_at), default="")
+    data_end_date = datetime.fromisoformat(max_sig_date).date() if max_sig_date else None
     slots = compute_weekly_buckets(start_date, end_date, data_end_date=data_end_date)
     extortion_counts = [0] * len(slots)
     snapshot_counts = [0] * len(slots)
@@ -1104,7 +1151,7 @@ def create_threat_flow_diagram(width: float = 178 * mm, height: float = 46,
 def create_regional_corridor_table(signals: List[Signal], st) -> Table:
     """
     Renders an executive regional corridor risk breakdown table accounting for
-    100% of claimed Indian victim organisations (44) and extortion postings (leak-site claims) (49).
+    100% of claimed Indian victim organisations and extortion postings (leak-site claims).
     Dynamically generates targeted industry sectors from data.
     """
     victims, total_posts, unique_orgs = extract_victim_attributions(signals)
@@ -1157,8 +1204,8 @@ def create_regional_corridor_table(signals: List[Signal], st) -> Table:
     tot_p_str = f"{total_p} post" if total_p == 1 else f"{total_p} posts"
     rows.append([
         Paragraph("<b>Total India Telemetry</b>", st["cellb"]),
-        Paragraph("<b>All 12 Monitored States / Clusters</b>", st["cellb"]),
-        Paragraph("<b>14 Industry Sectors Monitored</b>", st["cellb"]),
+        Paragraph(f"<b>All {len(STATE_GEO_COORDS)} Monitored States / Clusters</b>", st["cellb"]),
+        Paragraph(f"<b>{len([k for k in SECTORS if k != 'UNCLASSIFIED'])} Industry Sectors Monitored</b>", st["cellb"]),
         Paragraph(f"<b>{tot_o_str} (100.0%)</b>", st["cellc"]),
         Paragraph(f"<b>{tot_p_str} (100.0%)</b>", st["cellc"]),
     ])
@@ -1233,6 +1280,46 @@ def _headline_card(h: Dict, st) -> Table:
         ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
     ]))
     return card
+
+
+def _headline_index_table(entries: List[Dict], st) -> Table:
+    rows = [[Paragraph("<b>Date</b>", st["cellb"]),
+             Paragraph("<b>Incident</b>", st["cellb"]),
+             Paragraph("<b>Type</b>", st["cellb"]),
+             Paragraph("<b>Severity</b>", st["cellb"]),
+             Paragraph("<b>India</b>", st["cellb"])]]
+    for h in entries:
+        sev_hex = SEVERITY_HEX.get(h["severity"], "#5B6573")
+        rows.append([
+            Paragraph(format_date(h["date"]), st["cell"]),
+            Paragraph(_esc(h["title"].split(":")[0]), st["cell"]),
+            Paragraph(_esc(h["category"]), st["cell"]),
+            Paragraph(f'<font color="{sev_hex}"><b>{h["severity"]}</b></font>', st["cell"]),
+            Paragraph("Direct" if h.get("india_direct") else "Broad", st["cell"]),
+        ])
+    return _table(rows, [20 * mm, 78 * mm, 48 * mm, 16 * mm, 16 * mm], st, zebra=True,
+                  padding=(1.6, 1.6, 3, 3))
+
+
+def _headline_brief_table(entries: List[Dict], st) -> Table:
+    rows = [[Paragraph("<b>Date</b>", st["cellb"]),
+             Paragraph("<b>Incident</b>", st["cellb"]),
+             Paragraph("<b>Do this first</b>", st["cellb"]),
+             Paragraph("<b>Sources</b>", st["cellb"])]]
+    for h in entries:
+        sev_hex = SEVERITY_HEX.get(h["severity"], "#5B6573")
+        links = "<br/>".join(f'<a href="{_esc(src["url"])}" color="#1E3A5F">{_esc(src["name"])}</a>'
+                             for src in h["sources"])
+        rows.append([
+            Paragraph(format_date(h["date"]), st["cell"]),
+            Paragraph(f'<b>{_esc(h["title"])}</b><br/>'
+                      f'<font color="{sev_hex}"><b>{h["severity"].upper()}</b></font> · '
+                      f'{_esc(brief_text(h))}', st["cell"]),
+            Paragraph(_esc(h["actions"][0]), st["cell"]),
+            Paragraph(links, st["cell"]),
+        ])
+    return _table(rows, [18 * mm, 78 * mm, 54 * mm, 28 * mm], st, zebra=True,
+                  padding=(2.4, 2.4, 3, 3))
 
 
 def _news_watch_table(items: List[Dict], st) -> Table:
@@ -1377,6 +1464,7 @@ def compute_feed_provenance(signals: List[Signal]) -> Dict[str, Any]:
                 feed_snapshots[sig.source] = dt_str
 
     formatted_dates = {}
+    feed_snapshots_by_disp = {}
     feed_items = []
     for src in sorted(feed_snapshots.keys()):
         d_raw = feed_snapshots[src]
@@ -1386,6 +1474,7 @@ def compute_feed_provenance(signals: List[Signal]) -> Dict[str, Any]:
             d_fmt = d_raw
         src_disp = src.replace("abuse.ch ", "").replace(" (aggregate counts)", "")
         formatted_dates[src_disp] = d_fmt
+        feed_snapshots_by_disp[src_disp] = d_raw
         feed_items.append(f"{src_disp} ({d_fmt})")
 
     latest_raw = max(feed_snapshots.values()) if feed_snapshots else ""
@@ -1394,10 +1483,14 @@ def compute_feed_provenance(signals: List[Signal]) -> Dict[str, Any]:
     except Exception:
         latest_fmt = latest_raw
 
-    cisa_fmt = formatted_dates.get("CISA KEV", "08-Oct")
-    rl_fmt = formatted_dates.get("ransomlook.io", "08-Oct")
+    cisa_fmt = formatted_dates.get("CISA KEV", "n/a")
+    rl_fmt = formatted_dates.get("ransomlook.io", "n/a")
     their_dates = cisa_fmt if cisa_fmt == rl_fmt else f"{cisa_fmt} and {rl_fmt}"
-    currency_note = f"Data current to {latest_fmt} (CISA KEV and ransomlook.io: {their_dates})"
+    # Name the feeds that lag the newest one, so a stale feed is visible on the cover
+    lagging = [f"{name}: {d}" for name, d in sorted(formatted_dates.items())
+               if feed_snapshots_by_disp.get(name, "") < latest_raw and name in ("CISA KEV", "ransomlook.io", "ransomware.live", "CERT-In", "NVD")]
+    currency_note = (f"Data current to {latest_fmt or 'n/a'}"
+                     + (f" ({', '.join(lagging)})" if lagging else ""))
 
     return {
         "raw_dates": feed_snapshots,
@@ -1429,8 +1522,8 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
 
     window_str = f"{period_start} to {period_end} ({window_days} days)"
 
-    max_sig_date = max((s.observed_at[:10] for s in signals if s.observed_at), default="2026-10-10")
-    data_end_date = datetime.fromisoformat(max_sig_date).date()
+    max_sig_date = max((s.observed_at[:10] for s in signals if s.observed_at), default=end_date.isoformat())
+    data_end_date = min(datetime.fromisoformat(max_sig_date).date(), end_date)
     weekly_buckets = compute_weekly_buckets(start_date, end_date, data_end_date=data_end_date)
     final_bucket = weekly_buckets[-1]
     final_dates = final_bucket["dates"]
@@ -1440,8 +1533,8 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     provenance_info = compute_feed_provenance(signals)
 
     ioc_summary = get_ioc_summary(signals, public_mode=public_mode)
-    ioc_first_min = ioc_summary.get("first_seen_min", "2026-10-03")
-    ioc_first_max = ioc_summary.get("first_seen_max", "2026-10-10")
+    ioc_first_min = ioc_summary.get("first_seen_min") or "n/a"
+    ioc_first_max = ioc_summary.get("first_seen_max") or "n/a"
     surge_count = ioc_summary.get("ioc_window_recent_count", 0)
     total_iocs = ioc_summary.get("total_indicators", 0)
     unique_hosts = ioc_summary.get("unique_hosts", 0)
@@ -1479,7 +1572,15 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         if s.entities and s.entities.cves:
             all_cves.update(s.entities.cves)
 
-    crit_labels = ", ".join([short_sector_label(s["sector"]) for s in scored_sectors if s["risk_band"] in ("Critical", "High")][:3]) or "IT Services, Manufacturing, BFSI"
+    crit_labels = ", ".join([short_sector_label(s["sector"]) for s in scored_sectors if s["risk_band"] in ("Critical", "High")][:3]) or "none"
+
+    # Facts the narrative quotes, all computed from this window's signals
+    kev_groups = rf.kev_by_product(signals)
+    edge_text = rf.edge_cve_text(kev_groups)
+    edge_vendors = rf.edge_vendor_names(kev_groups)
+    window_iocs = extract_iocs(signals, public_mode=public_mode)
+    technique_examples = rf.ioc_technique_examples(window_iocs)
+    action_due = now_ist.date() + timedelta(days=7)
 
     # =========================================================================
     # COVER: headline numbers, bottom line, sector picture
@@ -1500,10 +1601,22 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         f"Generated: {now_ist.strftime('%d %b %Y %H:%M IST')}"
     ]
     story.append(Paragraph(" | ".join(_esc(m) for m in meta), st["sub"]))
+    try:
+        health_rows = source_health(now=now)
+    except sqlite3.Error:
+        health_rows = []
+    health_bad = health_problems(health_rows)
+    if health_bad:
+        story.append(Paragraph(
+            f"<font color='#B45309'><b>Source health:</b> {len(health_bad)} of "
+            f"{sum(1 for r in health_rows if r['status'] != 'MANUAL')} feeds failing or stale when this "
+            f"report was generated ({_esc(', '.join(r['source'] for r in health_bad[:4]))}"
+            f"{', ...' if len(health_bad) > 4 else ''}). See the Source Health table in the Methodology section.</font>",
+            st["sub"]))
     story.append(Spacer(1, 6))
 
-    seen_multiple_count = correlation.get("corroborated_count", 10)
-    seen_artefacts_count = correlation.get("shared_artefacts_count", 6)
+    seen_multiple_count = correlation.get("corroborated_count", 0)
+    seen_artefacts_count = correlation.get("shared_artefacts_count", 0)
 
     kpi_org_str = f"{unique_orgs} Org" if unique_orgs == 1 else f"{unique_orgs} Orgs"
     all_cves_count = len({c for s in signals if s.entities and s.entities.cves for c in s.entities.cves})
@@ -1527,7 +1640,8 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         _kpi("Sources", len(sources), "#1E3A5F"),
         _kpi("Extortion Postings", total_postings, "#9B1C1C", f"({kpi_org_str})"),
         _kpi("Actively Exploited (KEV)", cisa_kev_count, "#C2410C", f"({all_cves_count} Distinct CVEs Monitored)"),
-        _kpi("Seen in multiple feeds", seen_multiple_count, "#2F855A", f"({seen_artefacts_count} Artefacts)"),
+        _kpi("Seen in multiple feeds", seen_multiple_count, "#2F855A",
+             f"({seen_artefacts_count} Artefacts, {correlation.get('independent_artefacts_count', 0)} Independent)"),
         _kpi("High+ Sectors", critical_sectors, "#9B1C1C", f"({crit_labels})"),
     ]]
     story.append(_kpi_table(kpi_cards, [29.6 * mm] * 6))
@@ -1548,8 +1662,9 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
             f"(<font color='{SEVERITY_HEX[h['severity']]}'><b>{h['severity']}</b></font>)"
             for h in headlines[:4])
         n_h = len(headlines)
-        bluf.append(f"<b>{n_h} headline incident{'s' if n_h != 1 else ''} need{'s' if n_h == 1 else ''} "
-                    f"action now:</b> {named}. Details and checklists in section 01.")
+        more = f"; and {n_h - 4} more" if n_h > 4 else ""
+        bluf.append(f"<b>{n_h} headline incident{'s' if n_h != 1 else ''} in section 01.</b> "
+                    f"Act first on: {named}{more}.")
     if scored_sectors:
         top = scored_sectors[0]
         bluf.append(f"<b>{_esc(top['label'])}</b> carries the highest composite risk score "
@@ -1561,9 +1676,11 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         actors_txt = f" Most active groups: {_esc(', '.join(lead_actors))}." if lead_actors else ""
         bluf.append(f"<b>{unique_orgs} Indian {org_word}</b> named on ransomware leak sites "
                     f"across {total_postings} {post_word}.{actors_txt}")
-    bluf.append(f"<b>{cisa_kev_count} actively exploited vulnerabilities</b> (CISA KEV) map to technology "
-                f"used in Indian enterprises, and {len(infra_signals)} malware and phishing infrastructure "
-                f"signals yielded {total_iocs} indicators for alerting (see the companion IOC sheet).")
+    n_infra = len(infra_signals)
+    bluf.append(f"<b>{cisa_kev_count} actively exploited vulnerabilit{'y' if cisa_kev_count == 1 else 'ies'}</b> "
+                f"(CISA KEV) map to technology used in Indian enterprises, and {n_infra} malware and phishing "
+                f"infrastructure signal{'s' if n_infra != 1 else ''} yielded {total_iocs} indicator{'s' if total_iocs != 1 else ''} "
+                f"for alerting (see the companion IOC sheet).")
 
     bluf_box = Table([[[Paragraph("Bottom line", st["h3"])] +
                        [Paragraph(b, st["bluf"], bulletText="\u25A0") for b in bluf]]],
@@ -1602,8 +1719,21 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
             f"{end_date.strftime('%d %b %Y')} and do not change the sector scores in this report.",
             st["small"]))
         story.append(Spacer(1, 6))
-        for h in headlines:
+        if len(headlines) > 3:
+            story.append(Paragraph("This Month at a Glance", st["h3"]))
+            story.append(_headline_index_table(headlines, st))
+            story.append(Spacer(1, 8))
+        cards, brief = split_headlines(headlines)
+        for h in cards:
             story.append(KeepTogether([_headline_card(h, st), Spacer(1, 7)]))
+        if brief:
+            story.append(Paragraph("More Incidents to Know About", st["h3"]))
+            story.append(Paragraph("Global incidents that reach Indian organisations through shared "
+                                   "software and services. One line each, with the first thing to do.",
+                                   st["small"]))
+            story.append(Spacer(1, 3))
+            story.append(_headline_brief_table(brief, st))
+            story.append(Spacer(1, 7))
         if news_items:
             story.append(KeepTogether([
                 Paragraph("Also in the News (last 14 days)", st["h3"]),
@@ -1639,14 +1769,6 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
 
     sample_caveat = " (small sample, indicative only)" if (unique_orgs <= 10 or total_postings <= 10) else ""
 
-    corridor_states = {"Delhi NCR", "Gujarat", "Maharashtra"}
-    corridor_orgs = len({v["victim"] for v in victim_attributions if v["state"] in corridor_states})
-    corridor_pct = (corridor_orgs / float(unique_orgs)) * 100 if unique_orgs else 0.0
-
-    mfg_sec_label = sector_label("MANUFACTURING")
-    mfg_victims = [v for v in victim_attributions if v["sector"] == mfg_sec_label]
-    mfg_orgs = len({v["victim"] for v in mfg_victims})
-    mfg_pct = (mfg_orgs / float(unique_orgs)) * 100 if unique_orgs else 0.0
     actor_orgs_all = defaultdict(set)
     for v in victim_attributions:
         for a in v["actor"].split(", "):
@@ -1655,34 +1777,52 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     top_actors_by_victims = [act for act, _ in sorted(actor_orgs_all.items(), key=lambda x: (-len(x[1]), x[0]))[:4]]
     top_actors_str = ", ".join(top_actors_by_victims) if top_actors_by_victims else "Unattributed"
 
-    # Judgement 1: Corridor concentration
-    if corridor_orgs > 0:
-        j1_title = "1. Western & Northern Industrial Corridors Account for Majority of Extortions [Confidence: C3]"
+    # Judgement 1: where the named victims are
+    lead_states = rf.top_states(victim_attributions, 3)
+    lead_orgs = len({v["victim"] for v in victim_attributions if v["state"] in lead_states})
+    lead_pct = (lead_orgs / float(unique_orgs)) * 100 if unique_orgs else 0.0
+    unresolved_orgs = len({v["victim"] for v in victim_attributions if v["state"] == "Location Unresolved"})
+    sector_counts = Counter(v["sector"] for v in victim_attributions)
+    if lead_states:
+        share = "the Majority" if lead_pct > 50 else "the Largest Share"
+        j1_title = f"1. {_join_and(lead_states)} Account for {share} of Named Victims [Confidence: C3]"
+        top_sec, top_sec_n = sector_counts.most_common(1)[0]
         j1_desc = (
-            f"Organisations located across Delhi NCR, Gujarat, and Maharashtra account for {corridor_orgs} of {unique_orgs} "
-            f"claimed victim entities ({corridor_pct:.1f}%){sample_caveat}. Within the manufacturing and engineering sector, {mfg_orgs} of {unique_orgs} "
-            f"unique organisations ({mfg_pct:.1f}%) were named on leak sites, with primary adversary activity driven by syndicates "
+            f"Organisations located in {_join_and(lead_states)} account for {lead_orgs} of {unique_orgs} "
+            f"claimed victim entities ({lead_pct:.1f}%){sample_caveat}; {unresolved_orgs} could not be placed from public information. "
+            f"{top_sec} is the most-named sector ({top_sec_n} of {unique_orgs} organisations), with primary adversary activity driven by syndicates "
             f"ranked by victim volume: {top_actors_str}."
         )
-    else:
-        state_v_cnt = Counter(v["state"] for v in victim_attributions if v.get("state") and v["state"] != "Location Unresolved")
-        top_st_names = [st_name for st_name, _ in state_v_cnt.most_common(3)]
-        c_str = ", ".join(top_st_names) if top_st_names else "monitored regions"
-        j1_title = "1. Regional Hubs Account for Majority of Extortions [Confidence: C3]"
+    elif unique_orgs:
+        j1_title = "1. Named Victims Could Not Be Placed by State [Confidence: C3]"
         j1_desc = (
-            f"Organisations located across {c_str} account for the majority of observed victim entities{sample_caveat}. "
+            f"{unique_orgs} Indian organisations were named on leak sites{sample_caveat}, but none could be placed by state from public information. "
             f"Primary adversary activity is driven by syndicates ranked by victim volume: {top_actors_str}."
         )
+    else:
+        j1_title = "1. No Indian Organisations Named on Leak Sites in This Window [Confidence: C3]"
+        j1_desc = "The ransomware leak-site feeds named no Indian organisations during the reporting window."
 
-    # Judgement 2: Perimeter Gateways
-    j2_title = "2. Perimeter Gateways & SSL-VPNs Form Primary Observed Vulnerability Vectors [Confidence: B2]"
-    j2_desc = (
-        "Exploitation in the wild (per CISA KEV) of edge appliances--specifically Citrix NetScaler ADC/Gateway (CVE-2026-88779, "
-        "CVE-2026-88771, CVE-2026-88772, CVE-2026-8452), Cisco products (CVE-2026-76504, CVE-2026-76460, CVE-2026-76461), "
-        "MikroTik RouterOS (CVE-2026-67279, CVE-2026-67277, CVE-2026-86060), and SonicWall SMA (CVE-2026-83548, "
-        "CVE-2026-83549)--co-occurs with enterprise technology stacks in targeted sectors. While adversary leak sites do not "
-        "publish forensic initial-access root causes for individual breaches, perimeter appliances represent the most frequently observed edge-device CVEs in KEV."
-    )
+    # Judgement 2: exploited edge devices, from CISA KEV vendor and product data
+    kev_cve_total = len({c for g in kev_groups for c in g["cves"]})
+    edge_cve_total = len({c for g in kev_groups if g["edge"] for c in g["cves"]})
+    if edge_cve_total:
+        j2_title = (f"2. Edge and Remote-Access Devices Account for {edge_cve_total} of {kev_cve_total} "
+                    f"Exploited CVEs in the Window [Confidence: B2]")
+        j2_desc = (
+            f"CISA KEV records in-the-wild exploitation of internet-facing appliances during the window: {edge_text}. "
+            f"These devices sit on the perimeter of enterprise networks in the targeted sectors. Leak sites do not publish how victims "
+            f"were breached, so this marks exposure to a known way in, not the confirmed entry point for any named victim."
+        )
+        if kev_groups and not kev_groups[0]["edge"]:
+            j2_desc += (f" The single most-listed product this window is {kev_groups[0]['label']} "
+                        f"({kev_groups[0]['count']} CVEs), which is not an edge device.")
+    else:
+        j2_title = "2. No Edge-Device Exploitation Listed in CISA KEV This Window [Confidence: B2]"
+        j2_desc = (
+            f"CISA KEV listed {kev_cve_total} exploited CVEs relevant to Indian enterprise technology in the window, "
+            f"none of them in VPN, firewall or remote-access products."
+        )
 
     # Judgement 3: Dynamic Sector Risk Rankings
     top3_secs = scored_sectors[:3]
@@ -1714,54 +1854,50 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
 
     j3_desc = f"{'; '.join(j3_parts)}{sample_caveat}."
 
-    # Judgement 4: Campaign dumping
-    actor_dates = defaultdict(set)
-    actor_posts = defaultdict(int)
-    for v in victim_attributions:
-        for a in v["actor"].split(", "):
-            if a and a != "Unattributed":
-                actor_dates[a].add(v.get("date", ""))
-                actor_posts[a] += v.get("postings", 1)
-
+    # Judgement 4: how groups publish Indian victims
+    patterns = rf.actor_posting_patterns(victim_attributions)
+    waves = rf.single_day_waves(patterns)
+    episodic = [e for e in rf.episodic_actors(patterns) if not waves or e["actor"] != waves[0]["actor"]]
     j4_title = "4. Campaign Dumping vs. Episodic Batch Postings [Confidence: C3]"
-    if "Clop" in actor_posts and "Krybit" in actor_posts:
-        clop_posts = actor_posts["Clop"]
-        clop_dates = list(actor_dates["Clop"])
-        clop_date_str = clop_dates[0] if len(clop_dates) == 1 else "12-Aug-2026"
-        krybit_vics = [v for v in victim_attributions if "Krybit" in v["actor"]]
-        krybit_sec_counts = Counter(v["sector"] for v in krybit_vics)
-        krybit_sec_desc = ", ".join(f"{s.split('&')[0].strip()} ({c})" for s, c in krybit_sec_counts.most_common())
-        krybit_dates_cnt = len(actor_dates["Krybit"])
+    j4_parts = []
+    if waves:
+        w = waves[0]
+        j4_parts.append(
+            f"{w['actor']} posted {w['orgs']} Indian organisations on a single day ({rf.fmt_date(w['date'])}), which may indicate "
+            f"a coordinated mass-exploitation wave rather than separate intrusions")
+    if episodic:
+        e = episodic[0]
+        sec_desc = _join_and([sec.split("&")[0].strip() for sec in e["sectors"]])
+        j4_parts.append(
+            f"{e['actor']} ({e['orgs']} unique organisations across {e['postings']} postings) published victims in "
+            f"batches on {e['dates']} separate dates, mostly in {sec_desc}")
+    if j4_parts:
+        j4_desc = (f"{'. '.join(j4_parts)}{sample_caveat}. Leak-site dates reflect publication after failed negotiations, "
+                   f"not the date of intrusion.")
+    elif patterns:
+        lead_actor = max(patterns, key=lambda a: patterns[a]["postings"])
+        lp = patterns[lead_actor]
         j4_desc = (
-            f"Clop's {clop_posts} victim postings occurred simultaneously on {clop_date_str}, which may indicate a coordinated mass-exploitation "
-            f"wave rather than separate intrusions. Conversely, Krybit ({len(krybit_vics)} unique organisations across "
-            f"{sum(v['postings'] for v in krybit_vics)} postings) dumps victims in episodic batches across {krybit_dates_cnt} distinct "
-            f"dates targeting {krybit_sec_desc}{sample_caveat}."
-        )
-    elif actor_posts:
-        lead_actor = max(actor_posts.keys(), key=lambda a: actor_posts[a])
-        lead_posts = actor_posts[lead_actor]
-        lead_dates_cnt = len(actor_dates[lead_actor])
-        other_actors = [a for a in sorted(actor_posts.keys(), key=lambda x: -actor_posts[x]) if a != lead_actor][:2]
-        other_str = f", followed by {', '.join(other_actors)}" if other_actors else ""
-        j4_desc = (
-            f"Adversary activity during this period was led by {lead_actor} ({lead_posts} postings across {lead_dates_cnt} distinct date(s)){other_str}{sample_caveat}. "
-            f"Adversary leak sites often batch disclosures following private negotiation deadlines, "
-            f"meaning publication timestamps reflect leak-site operational cadences rather than contemporaneous network compromise dates."
+            f"Adversary activity during this period was led by {lead_actor} ({lp['postings']} postings across "
+            f"{len(lp['dates'])} distinct date(s)){sample_caveat}. Leak sites often batch disclosures after private negotiation "
+            f"deadlines, so publication dates reflect leak-site cadence rather than network compromise dates."
         )
     else:
-        j4_desc = (
-            f"Adversary leak sites demonstrate episodic disclosure cadences tied to private extortion timelines{sample_caveat}. "
-            f"Publication dates reflect leak-site operations rather than contemporaneous intrusion timestamps."
-        )
+        j4_desc = "No attributed leak-site postings of Indian organisations were recorded in the window."
 
     # Judgement 5: Malware Delivery Chains
-    j5_title = "5. Domestic Websites Leveraged in Malware Delivery Chains [Confidence: C3]"
-    j5_desc = (
-        f"Threat telemetry identifies {dom_comp_hosts} compromised, {dom_unver_hosts} unverified, {dom_phish_hosts} phishing lookalikes ({unique_hosts} hosts, {total_iocs} records) "
-        f"with exact .in ccTLD suffixes weaponized as distribution points for ClearFake, ClickFix, and EtherHiding "
-        f"social engineering campaigns. Security operations teams should alert and notify site owners and CERT-In rather than merely applying local perimeter defensive blocks."
-    )
+    technique_names = [t["technique"] for t in technique_examples]
+    if total_iocs:
+        j5_title = "5. Domestic Websites Leveraged in Malware Delivery Chains [Confidence: C3]"
+        j5_desc = (
+            f"Threat telemetry identifies {dom_comp_hosts} compromised, {dom_unver_hosts} unverified, {dom_phish_hosts} phishing lookalikes ({unique_hosts} hosts, {total_iocs} records) "
+            f"with exact .in ccTLD suffixes used as distribution points"
+            f"{', mainly for ' + _join_and(technique_names) if technique_names else ''}. "
+            f"Security operations teams should alert and notify site owners and CERT-In rather than merely applying local perimeter defensive blocks."
+        )
+    else:
+        j5_title = "5. No Domestic Malware Delivery Infrastructure Observed [Confidence: C3]"
+        j5_desc = "No .in-hosted malware delivery or phishing indicators were recorded by the infrastructure feeds in this window."
 
     judgements = [
         (j1_title, j1_desc),
@@ -1785,7 +1921,7 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     priority_for = {"Critical": ("#C0392B", "P1: Critical"), "High": ("#D35400", "P2: High"),
                     "Medium": ("#27AE60", "P3: Medium"), "Low": ("#27AE60", "P3: Medium")}
     headline_rows = []
-    for h in headlines:
+    for h in headlines[:6]:
         colour, label = priority_for[h["severity"]]
         headline_rows.append([
             Paragraph(f"<font color='{colour}'><b>{label}</b></font>", st["cell"]),
@@ -1801,7 +1937,10 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
          Paragraph("<b>Primary Stakeholder</b>", st["cellb"])],
         *headline_rows,
         [Paragraph("<font color='#C0392B'><b>P1: Critical</b></font>", st["cell"]),
-         Paragraph("Patch Internet-facing edge appliances (Citrix NetScaler CVE-2026-88779, CVE-2026-88771, CVE-2026-8452; Cisco CVE-2026-76504, CVE-2026-76460, CVE-2026-76461; SonicWall SMA CVE-2026-83548, CVE-2026-83549; MikroTik RouterOS CVE-2026-67279). Recommended target date: 17 Oct 2026.", st["cell"]),
+         Paragraph(_esc(
+             (f"Patch Internet-facing edge appliances listed in CISA KEV ({edge_text}). " if edge_text else
+              f"Patch the {kev_cve_total} actively exploited CVEs listed in CISA KEV this window, internet-facing systems first. ")
+             + f"Recommended target date: {action_due.strftime('%d %b %Y')}."), st["cell"]),
          Paragraph("External Perimeter", st["cell"]),
          Paragraph("Network / SysAdmin", st["cell"])],
         [Paragraph("<font color='#C0392B'><b>P1: Critical</b></font>", st["cell"]),
@@ -1834,7 +1973,8 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     story.append(_section_header("India Threat Telemetry & Regional Hotspots", sec_no, st))
     story.append(Paragraph(
         "Geographic distribution of extortion postings (leak-site claims) across Indian industrial corridors and metropolitan centers. "
-        "High-density adversary concentration is observed across Delhi NCR headquarters, Gujarat manufacturing hubs, and Maharashtra commercial clusters.",
+        + (f"The most-named locations this window are {_join_and(lead_states)}; {unresolved_orgs} of {unique_orgs} organisations could not be placed."
+           if lead_states else "No named organisation could be placed by state this window."),
         st["small"]))
     story.append(Spacer(1, 3))
 
@@ -1863,18 +2003,15 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     sec_no += 1
     story.append(_section_header("Adversary Landscape & Targeted Technology Infrastructure", sec_no, st))
     story.append(Paragraph(
-        "Active extortion syndicates and threat groups observed targeting Indian organisations, paired with enterprise technology stacks "
-        "under active exploitation. Edge gateways and remote collaboration suites remain focal access vectors for initial access brokers (IABs).",
+        "Active extortion syndicates and threat groups observed targeting Indian organisations, paired with the enterprise technology "
+        "listed in CISA KEV as exploited during the window."
+        + (f" Edge devices from {_join_and(edge_vendors)} feature among the exploited products." if edge_vendors else ""),
         st["small"]))
     story.append(Spacer(1, 4))
 
     story.append(create_threat_actors_bar_chart(signals))
     story.append(Spacer(1, 2))
-    story.append(Paragraph(
-        "<i>* Note: Top 7 actors shown individually; 10 remaining syndicates each with 1-2 victims aggregated into Others. "
-        "Eclipse 4 postings represent subdomains of 1 organisation. UmBra 4 postings represent 2 organisations listed on 2 feeds (note: ransomware.live and ransomlook.io share an upstream scraper source). "
-        "All 44 unique entities and 49 postings accounted for (100.0%).</i>",
-        st["small"]))
+    story.append(Paragraph(_actor_chart_note(signals, unique_orgs, total_postings), st["small"]))
     story.append(Spacer(1, 4))
 
     story.append(create_targeted_tech_chart(signals))
@@ -1883,31 +2020,23 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     story.append(Paragraph("<b>Spotlight: High-Impact CERT-In Advisories in Reporting Period</b>", st["h3"]))
     adv_rows = [
         [Paragraph("<b>Advisory ID &amp; Date</b>", st["cellb"]),
-         Paragraph("<b>Affected Technology</b>", st["cellb"]),
-         Paragraph("<b>Threat Vector &amp; Severity</b>", st["cellb"]),
+         Paragraph("<b>Subject</b>", st["cellb"]),
+         Paragraph("<b>Severity</b>", st["cellb"]),
          Paragraph("<b>Annexure I Category</b>", st["cellb"])],
-        [Paragraph("CIVN-2026-0492<br/><font color='#666666' size='5.8'>06 Oct 2026</font>", st["mono"]),
-         Paragraph("Citrix NetScaler ADC &amp; Gateway", st["cell"]),
-         Paragraph("Denial of Service &amp; Resource Exhaustion (High)", st["cell"]),
-         Paragraph("(viii) Denial of Service (DoS)", st["cell"])],
-        [Paragraph("CIVN-2026-0494<br/><font color='#666666' size='5.8'>07 Oct 2026</font>", st["mono"]),
-         Paragraph("MikroTik RouterOS", st["cell"]),
-         Paragraph("SSH Pre-Authentication Rekey State Bypass (High)", st["cell"]),
-         Paragraph("(vi) Attacks on Servers / Net Devices", st["cell"])],
-        [Paragraph("CIAD-2026-0046<br/><font color='#666666' size='5.8'>29 Sep 2026</font>", st["mono"]),
-         Paragraph("BFSI Payment &amp; Disbursement APIs", st["cell"]),
-         Paragraph("API Exploitation for Unauthorized Fund Transfers (High)", st["cell"]),
-         Paragraph("(xiv) Digital Payment Systems", st["cell"])],
-        [Paragraph("CIVN-2026-0487<br/><font color='#666666' size='5.8'>24 Sep 2026</font>", st["mono"]),
-         Paragraph("Fortinet FortiMail Secure Gateway", st["cell"]),
-         Paragraph("Path Traversal &amp; Arbitrary File Access (High)", st["cell"]),
-         Paragraph("(vi) Attacks on Servers / Net Devices", st["cell"])],
-        [Paragraph("CIVN-2026-0482<br/><font color='#666666' size='5.8'>18 Sep 2026</font>", st["mono"]),
-         Paragraph("Cisco Nexus Dashboard Software", st["cell"]),
-         Paragraph("Multiple Vulnerabilities &amp; Privilege Escalation (High)", st["cell"]),
-         Paragraph("(vi) Attacks on Servers / Net Devices", st["cell"])],
     ]
-    story.append(_table(adv_rows, [28 * mm, 52 * mm, 64 * mm, 34 * mm], st, zebra=True, padding=(1.4, 1.4, 2.5, 2.5)))
+    for adv in rf.certin_advisories(signals):
+        cats = "; ".join(f"({r}) {textwrap.shorten(ANNEXURE_I[r]['title'], 52, placeholder='...')}"
+                         for r in adv["annexure"][:2] if r in ANNEXURE_I)
+        adv_rows.append([
+            Paragraph(f"{_esc(adv['reference'])}<br/><font color='#666666' size='5.8'>{rf.fmt_date(adv['date'])}</font>", st["mono"]),
+            Paragraph(_esc(adv["subject"]), st["cell"]),
+            Paragraph(_esc(adv["severity"]), st["cell"]),
+            Paragraph(_esc(cats) or "Not mapped", st["cell"]),
+        ])
+    if len(adv_rows) == 1:
+        adv_rows.append([Paragraph("None in window", st["cell"]), Paragraph("No CERT-In notes or advisories were collected for this window.", st["cell"]),
+                         Paragraph("", st["cell"]), Paragraph("", st["cell"])])
+    story.append(_table(adv_rows, [28 * mm, 80 * mm, 18 * mm, 52 * mm], st, zebra=True, padding=(1.4, 1.4, 2.5, 2.5)))
     story.append(Spacer(1, 2))
     story.append(Paragraph(
         "<i>* Source: CERT-In Vulnerability Notes &amp; Advisories (cert-in.org.in). Non-Equivalence Notice: CERT-In advisories "
@@ -1965,9 +2094,16 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
 
     weekly_note = ""
     if window_days <= 14:
+        from .database import get_signals
         from .snapshot import compute_weekly_changes
-        weekly_delta = compute_weekly_changes(signals, scored_sectors, ioc_summary)
-        weekly_note = f"<br/><b>Change vs Previous Week (Rolling 7-Day Baseline: 27 Sep - 04 Oct 2026):</b> {weekly_delta['summary_text']}"
+        prior_end = start_date
+        prior_start = prior_end - timedelta(days=window_days)
+        prior_signals = [Signal.from_row(r) for r in get_signals(days=window_days, end_date=prior_end)]
+        prior_anchor = datetime(prior_end.year, prior_end.month, prior_end.day, 23, 59, 59,
+                                tzinfo=timezone(timedelta(hours=5, minutes=30)))
+        weekly_delta = compute_weekly_changes(signals, scored_sectors, ioc_summary, prior_signals, prior_anchor)
+        weekly_note = (f"<br/><b>Change vs Previous {window_days} Days ({prior_start.strftime('%d %b')} - "
+                       f"{prior_end.strftime('%d %b %Y')}):</b> {weekly_delta['summary_text']}")
 
     from .collectors.vulns import EDGE_VENDOR_SECTORS
     edge_sample = ", ".join(sorted(list(EDGE_VENDOR_SECTORS.keys())[:5]))
@@ -2019,7 +2155,7 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
                             zebra=True, padding=(1.6, 1.6, 2.5, 2.5)))
         story.append(Spacer(1, 2.0))
 
-        from .iocs import extract_iocs, extract_host
+        from .iocs import extract_host
         all_extracted = extract_iocs(signals, public_mode=public_mode)
         host_to_sec = {}
         for sig in signals:
@@ -2042,13 +2178,13 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         sens_str = ", ".join(sens_parts)
 
         story.append(Paragraph(
-            f"<i>* Multi-Source Methodology &amp; Sector Mapping Rules: Threat telemetry is collected from 9 multi-source feeds. "
+            f"<i>* Multi-Source Methodology &amp; Sector Mapping Rules: Threat telemetry is collected from {len(sources)} multi-source feeds. "
             f"CISA KEV and NVD share upstream CVE data, while ransomware.live and ransomlook.io track overlapping extortion leak sites; "
             f"corroboration scoring adjusts for shared upstream parents without awarding artificial confidence uplifts. Out of {total_iocs} actionable domestic indicators across {unique_hosts} unique hosts, "
             f"{attr_iocs_cnt} are attributed to specific sector technology stacks, while {unsec_iocs_cnt} represent unsectored domestic delivery infrastructure ({attr_iocs_cnt} + {unsec_iocs_cnt} = {total_iocs} total domestic threat indicators across {unique_hosts} unique hosts). "
             f"Sensitivity Analysis: Scores without the Delivery/Phishing Hosts (Infra) component were renormalised by dividing raw scores by 0.85 to rescale weights to 1.0: {sens_str}. "
             f"Rankings are sensitive to the Infra component (active delivery infrastructure). Scores can fall or rise when Infra is removed because Infra weight differs per sector. "
-            f"Zero ingestion was recorded during this {window_days}-day period for dark web forums and hacktivist claim tracking (feeds active, 0 relevant signals). "
+            f"{_manual_feed_note(signals, window_days)} "
             f"Single-source leak site claims carry Admiralty C/D reliability and are capped at Moderate (C2/C3) confidence.</i>",
             st["small"]))
 
@@ -2104,14 +2240,7 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     story.append(PageBreak())
     sec_no += 1
     story.append(_section_header("Cross-Source Correlation & Infrastructure Co-Occurrence", sec_no, st))
-    story.append(Paragraph(
-        f"Cross-source telemetry reconciles <b>{correlation.get('corroborated_count', 10)} signals across "
-        f"{correlation.get('shared_artefacts_count', 6)} shared artefacts</b>: 3 CVEs tracked across both CISA KEV and NVD "
-        f"(CVE-2026-102489, CVE-2026-88771, CVE-2026-82078); 2 victim organisations listed on both ransomware.live and ransomlook.io "
-        f"(2 victim organisations in the Education sector; note: both feeds share an upstream scraper source); and 1 threat actor (UmBra). Note on shared-parent feeds: CISA KEV and NVD share "
-        f"upstream CVE data, while ransomware.live and ransomlook.io both monitor underlying TOR leak sites. Accordingly, no independent confidence "
-        f"uplift is awarded for corroboration between shared-parent feeds.",
-        st["small"]))
+    story.append(Paragraph(_correlation_summary(correlation), st["small"]))
     story.append(Spacer(1, 3))
 
     cisa_k_cnt = sum(1 for s in signals if s.source == "CISA KEV")
@@ -2156,24 +2285,50 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     shared = correlation.get("shared_artefacts", [])
     if shared:
         story.append(Paragraph("Artefacts Seen Across Multiple Feeds", st["h3"]))
-        rows = [[Paragraph("<b>Artefact Identifier</b>", st["cellb"]),
-                 Paragraph("<b>Sources</b>", st["cellb"]),
-                 Paragraph("<b>Signal Classifications</b>", st["cellb"]),
-                 Paragraph("<b>Assessed Severity</b>", st["cellb"])]]
-        for item in shared[:6]:
-            if any(st_t in ("victim", "data_leak") for st_t in item.get("signal_types", [])):
+        story.append(Paragraph(
+            "Each row shows how the feeds matched and the first record from each feed. Exact artefact = the same CVE, hash, "
+            "domain, IP or URL; same organisation = the same named organisation after name normalisation.",
+            st["small"]))
+        rows = [[Paragraph("<b>Artefact</b>", st["cellb"]),
+                 Paragraph("<b>Match</b>", st["cellb"]),
+                 Paragraph("<b>Independent?</b>", st["cellb"]),
+                 Paragraph("<b>Evidence (first record per feed)</b>", st["cellb"])]]
+        for item in shared[:8]:
+            if item["strength"] == "organisation":
                 sec_lbl = sector_label(item["sectors"][0]) if item.get("sectors") else "Corporate"
-                disp_art = f"{sec_lbl} entity (corroborated)"
+                disp_art = f"{sec_lbl} entity (named victim)"
             else:
                 disp_art = item["artefact"]
+            evidence = "<br/>".join(f"{_esc(e['source'])}: {_esc(e['observed_at'])}" for e in item["evidence"])
+            indep = ("<font color='#2F855A'><b>Yes</b></font>" if item["independent"]
+                     else f"No, shared upstream ({_esc(', '.join(item['families']))})")
             rows.append([
                 Paragraph(_esc(disp_art)[:55], st["mono"]),
-                Paragraph(_esc(", ".join(item["sources"][:3])), st["cell"]),
-                Paragraph(_esc(", ".join(item["signal_types"][:3])), st["cell"]),
-                Paragraph(_esc(item["max_severity"]), st["cellc"]),
+                Paragraph(_esc(item["match"]), st["cell"]),
+                Paragraph(indep, st["cell"]),
+                Paragraph(evidence, st["cell"]),
             ])
-        story.append(_table(rows, [64*mm, 48*mm, 44*mm, 22*mm], st, zebra=True,
+        story.append(_table(rows, [52*mm, 28*mm, 46*mm, 52*mm], st, zebra=True,
                             padding=(1.8, 1.8, 3, 3)))
+        story.append(Spacer(1, 4))
+
+    possible = correlation.get("possible_links", [])
+    if possible:
+        story.append(Paragraph("Possible Links (Name Match Only, Not Counted)", st["h3"]))
+        rows = [[Paragraph("<b>Name</b>", st["cellb"]),
+                 Paragraph("<b>Kind</b>", st["cellb"]),
+                 Paragraph("<b>Feeds</b>", st["cellb"]),
+                 Paragraph("<b>Why it is not counted</b>", st["cellb"])]]
+        for item in possible[:5]:
+            kind = "threat actor" if item["field"] == "actors" else "malware family"
+            rows.append([
+                Paragraph(_esc(_normalize_actor(item["artefact"]) if item["field"] == "actors" else item["artefact"]), st["cell"]),
+                Paragraph(kind, st["cell"]),
+                Paragraph(_esc(", ".join(item["sources"])), st["cell"]),
+                Paragraph("A shared name alone does not show a common campaign; groups rebrand, share names and are spelled "
+                          "differently across feeds.", st["cell"]),
+            ])
+        story.append(_table(rows, [36*mm, 26*mm, 46*mm, 70*mm], st, zebra=True, padding=(1.8, 1.8, 3, 3)))
 
     # =========================================================================
     # PAGE 8: Priority Intelligence Signals & Tactical Ingress Telemetry
@@ -2187,11 +2342,6 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         "KEV vulnerabilities are listed in CISA KEV as exploited (active in-the-wild exploitation or historical baseline).",
         st["small"]))
     story.append(Spacer(1, 3))
-
-    def _effective_conf(s: Signal) -> float:
-        if "vi***in" in s.title.lower() or "vi***in" in str(s.entities.organisations).lower():
-            return 0.45
-        return min(s.confidence, 0.60)
 
     # 1. Table 1: Priority Extortion Telemetry (Disclosures by Sector & Threat Actor)
     story.append(Paragraph("<b>Priority Extortion Telemetry (Disclosures by Sector &amp; Threat Actor)</b>", st["h3"]))
@@ -2259,12 +2409,12 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         seen_cves.add(c)
         raw_data = s.raw if isinstance(s.raw, dict) else {}
         date_added = raw_data.get("dateAdded") or (s.observed_at or "")[:10]
-        cve_year = 2026
+        cve_year = 0
         try:
             cve_year = int(c.split("-")[1])
         except Exception:
             pass
-        if cve_year >= 2026 and date_added >= start_date.isoformat():
+        if cve_year >= end_date.year - 1 and date_added >= start_date.isoformat():
             actives.append(s)
         else:
             baselines.append(s)
@@ -2286,13 +2436,13 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         date_added = raw_data.get("dateAdded") or (s.observed_at or "")[:10]
         vuln_title = s.title.split(":", 1)[1].strip() if ":" in s.title else s.title
 
-        cve_year = 2026
+        cve_year = 0
         try:
             cve_year = int(cve_id.split("-")[1])
         except Exception:
             pass
 
-        is_active = (cve_year >= 2026 and date_added >= start_date.isoformat())
+        is_active = (cve_year >= end_date.year - 1 and date_added >= start_date.isoformat())
         if is_active:
             status_text = "<font color='#C0392B'><b>Active KEV exploitation</b></font>"
             sev_col = "#791F1F" if s.severity.value == "Critical" else "#C0392B"
@@ -2323,10 +2473,10 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
 
     story.append(Paragraph("<b>Perimeter Ingress Analysis & Tactical Infrastructure Drivers</b>", st["h3"]))
     story.append(Paragraph(
-        "<b>Edge Appliance Exposure:</b> Internet-facing network infrastructure represents a primary attack vector in the Indian "
-        "operating theater. Remote access appliances and perimeter gateways from Citrix, MikroTik, Cisco, and Fortinet "
-        "face automated scanning and exploitation attempts following public vulnerability disclosure. Organizations running unpatched SSL-VPN "
-        "and gateway firmware are exposed to pre-authentication bypass and credential dumping.",
+        "<b>Edge Appliance Exposure:</b> Internet-facing network infrastructure is a common initial-access route. "
+        + (f"CISA KEV lists exploitation of remote-access appliances and perimeter gateways from {_join_and(edge_vendors)} in this window; "
+           "organisations running unpatched SSL-VPN and gateway firmware are exposed to pre-authentication bypass and credential theft."
+           if edge_vendors else "CISA KEV listed no exploited edge-device CVEs in this window; keep perimeter firmware current regardless."),
         st["body_justify"]))
     story.append(Spacer(1, 2.0))
     story.append(Paragraph(
@@ -2335,9 +2485,8 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         f"with Indian domain relevance across .in ccTLDs. The actual IOC ingestion window from the companion CSV spans {ioc_first_min} to {ioc_first_max}; "
         f"{surge_count} of {total_iocs} indicators fell in the {final_dates} interval ({final_days} days). "
         f"BGP routing resolution reveals hosting across global infrastructure: {asn_dist_str}; threat classifications designate indicators as 'Indian' referring to the domain suffix (.in ccTLDs), not hosting location. "
-        f"Observed attack mechanisms include drive-by injection chains (e.g. virazofurniture[.]in), "
-        f"EtherHiding smart-contract payload distribution, and image-hosted RemcosRAT payloads (specifically URLhaus ficus[.]in staging an image-hosted "
-        f"payload rather than a standalone C2 IP). Network defenders should ingest these indicators in alert-first monitoring mode before active blocking.",
+        f"{_technique_sentence(technique_examples)}"
+        f"Network defenders should ingest these indicators in alert-first monitoring mode before active blocking.",
         st["body_justify"]))
     story.append(Spacer(1, 2.0))
     story.append(Paragraph(
@@ -2465,7 +2614,10 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
             [Paragraph("<b>Defensive Domain</b>", st["cellb"]),
              Paragraph("<b>Strategic Hardening Imperatives &amp; SOC Recommendations</b>", st["cellb"])],
             [Paragraph("<b>Perimeter Edge Ingress</b>", st["cell"]),
-             Paragraph("Immediately apply security updates for internet-facing edge appliances identified in CISA KEV (Citrix NetScaler CVE-2026-88779/88771/8452, Cisco CVE-2026-76504, SonicWall SMA, MikroTik). Disable public WAN management interfaces; restrict remote administration to dedicated out-of-band networks.", st["cell"])],
+             Paragraph(_esc(
+                 (f"Immediately apply security updates for internet-facing edge appliances identified in CISA KEV ({edge_text}). "
+                  if edge_text else "Keep internet-facing edge appliances on current firmware and watch CISA KEV for new entries. ")
+                 + "Disable public WAN management interfaces; restrict remote administration to dedicated out-of-band networks."), st["cell"])],
             [Paragraph("<b>Identity &amp; Access Assurance</b>", st["cell"]),
              Paragraph("Enforce phishing-resistant multi-factor authentication (FIDO2 / WebAuthn hardware security keys) across all remote access portals (VPN, RDP, VDI, cloud tenancies). Eliminate legacy SMS and voice OTP fallback. Terminate dormant accounts and mandate strict session lifetime limits.", st["cell"])],
             [Paragraph("<b>Attack Surface Minimisation</b>", st["cell"]),
@@ -2593,6 +2745,7 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         "<b>Hacktivist Disinformation:</b> Hacktivist claims are treated with low default confidence (0.40-0.60). Claims are frequently recycled, exaggerated, or claim defacements as critical infrastructure breaches.",
         "<b>Small Signal Sensitivity:</b> Industry sectors with limited telemetry can experience noticeable score shifts from single incidents; early indicators should be interpreted directionally.",
     ]
+    limits.append(_backtest_limit_text())
     for limit in limits:
         story.append(Paragraph(f"* {limit}", st["body_justify"]))
         story.append(Spacer(1, 2.0))
@@ -2637,10 +2790,34 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         story.append(Paragraph(_esc(DISCLAIMER), st["small"]))
     story.append(Spacer(1, 4))
 
+    # Second page of the section: feed health and provenance belong together
+    story.append(PageBreak())
+    if health_rows:
+        story.append(Paragraph("<b>Source Health at Generation</b>", st["h3"]))
+        story.append(Paragraph(
+            "Last collected is the last collector run that did not fail; newest record is the most recent item the feed "
+            "returned. A recently collected feed can still carry old records. Limits are the age after which a feed counts as stale.",
+            st["small"]))
+        status_hex = {"OK": "#2F855A", "DEGRADED": "#B7791F", "STALE": "#C2410C", "FAILING": "#9B1C1C",
+                      "NOT COLLECTED": "#5B6573", "MANUAL": "#5B6573"}
+        h_rows = [[Paragraph(f"<b>{h}</b>", st["cellb"]) for h in
+                   ("Feed", "Status", "Last collected", "Newest record", "Stale after")]]
+        for r in health_rows:
+            h_rows.append([
+                Paragraph(_esc(r["source"]), st["cell"]),
+                Paragraph(f"<font color='{status_hex.get(r['status'], '#5B6573')}'><b>{r['status']}</b></font>", st["cell"]),
+                Paragraph(_esc(r["last_collected"] or "never"), st["cellc"]),
+                Paragraph(_esc(r["newest_record"] or "-"), st["cellc"]),
+                Paragraph(f"{r['max_age_days']} days" if r["max_age_days"] else "analyst-maintained", st["cellc"]),
+            ])
+        story.append(_table(h_rows, [56 * mm, 30 * mm, 30 * mm, 30 * mm, 32 * mm], st, zebra=True,
+                            padding=(1.2, 1.2, 2.5, 2.5)))
+        story.append(Spacer(1, 5))
+
     story.append(Paragraph(
         f"<b>Technical Metadata &amp; Pipeline Provenance:</b><br/>"
-        f"<b>Intelligence Feed Snapshot Ingestion Dates (9 Feeds):</b> {_esc(provenance_info['provenance_str'])}<br/>"
-        f"<b>Analytics Engine:</b> Scoring Engine v2.5 (Window end-date deterministic anchor: {_esc(DEFAULT_ANCHOR_DT.strftime('%Y-%m-%d %H:%M'))} IST)<br/>"
+        f"<b>Intelligence Feed Snapshot Ingestion Dates ({len(provenance_info['raw_dates'])} Feeds):</b> {_esc(provenance_info['provenance_str'])}<br/>"
+        f"<b>Analytics Engine:</b> Scoring Engine v{SCORING_VERSION} (Window end-date deterministic anchor: {_esc(DEFAULT_ANCHOR_DT.strftime('%Y-%m-%d %H:%M'))} IST)<br/>"
         f"<b>Companion IOC Artifact:</b> <b>{_esc(csv_filename)}</b> | SHA-256: <code>{_esc(csv_hash)}</code><br/>"
         f"<b>Reference Framework:</b> CERT-In Directions Reference: {_esc(DIRECTION_URL)}<br/>"
         f"<b>Ingested Feed Sources:</b> {_esc(', '.join(sorted(sources)))}", st["small"]))

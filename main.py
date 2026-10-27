@@ -18,6 +18,10 @@ Usage
   python main.py certin --incident "..." --sector BFSI
   python main.py clock --noticed "2026-09-05 08:30"
   python main.py stats
+  python main.py health                     feed freshness and failures
+  python main.py validate                   check hand-maintained data files
+  python main.py backtest --write docs/BACKTEST.md
+  python main.py export --format both --public   STIX 2.1 + MISP for CTI platforms
 """
 
 import argparse
@@ -210,13 +214,15 @@ def cmd_correlate(args):
 
     result = correlate(signals)
     print(f"\n{BOLD}Cross-source correlation - {result['total_signals']} signals{RESET}")
-    print(f"  {GREEN}{result['corroborated_count']} signals corroborated by "
-          f"a second source{RESET}")
+    print(f"  {result['corroborated_count']} signals seen in more than one feed "
+          f"({result['shared_artefacts_count']} artefacts)")
+    print(f"  {GREEN}{result['independently_corroborated_count']} signals independently corroborated "
+          f"({result['independent_artefacts_count']} artefacts from separate feed families){RESET}")
 
     if result["exploit_victim_links"]:
         print(f"\n{CYAN}Exploited CVE meeting live victim activity{RESET}")
-        print(f"{DIM}  A known way in, plus proof it is being used against "
-              f"that sector now.{RESET}")
+        print(f"{DIM}  Co-occurrence in the same sector: a known way in, not proof it was "
+              f"the way in.{RESET}")
         for link in result["exploit_victim_links"][:8]:
             flag = f" {RED}[ransomware campaigns]{RESET}" if link["ransomware_linked"] else ""
             edge = f" {YELLOW}[edge device]{RESET}" if link["edge_device"] else ""
@@ -229,11 +235,18 @@ def cmd_correlate(args):
     if result["shared_artefacts"]:
         print(f"\n{CYAN}Artefacts seen by more than one source{RESET}")
         for item in result["shared_artefacts"][:10]:
-            print(f"  {item['artefact'][:44]:<46} {item['source_count']} sources  "
-                  f"{DIM}{', '.join(item['signal_types'][:3])}{RESET}")
+            indep = f"{GREEN}independent{RESET}" if item["independent"] else f"{DIM}shared upstream{RESET}"
+            evidence = "; ".join(f"{e['source']} {e['observed_at']}" for e in item["evidence"])
+            print(f"  {item['artefact'][:40]:<42} {item['match']:<18} {indep}")
+            print(f"  {DIM}  {evidence[:90]}{RESET}")
+
+    if result["possible_links"]:
+        print(f"\n{CYAN}Possible links (name match only, not counted){RESET}")
+        for item in result["possible_links"][:8]:
+            print(f"  {item['artefact'][:40]:<42} {item['field']:<18} {DIM}{', '.join(item['sources'])}{RESET}")
 
     if result["actor_chains"]:
-        print(f"\n{CYAN}Actors appearing across signal types{RESET}")
+        print(f"\n{CYAN}Actor names appearing across signal types (name match only){RESET}")
         for chain in result["actor_chains"][:8]:
             print(f"  {chain['actor'][:26]:<28} {chain['signal_count']:>3} signals  "
                   f"{DIM}{', '.join(chain['signal_types'][:4])}{RESET}")
@@ -420,6 +433,106 @@ def cmd_stats(args):
     print()
 
 
+HEALTH_COLOR = {"OK": GREEN, "MANUAL": DIM, "DEGRADED": YELLOW, "NOT COLLECTED": DIM,
+                "STALE": YELLOW, "FAILING": RED}
+
+
+def cmd_health(args):
+    from core.health import problems, source_health
+    db.init_db(); db.init_signals()
+    rows = source_health()
+    print(f"\n{BOLD}Source health{RESET}  {DIM}(last collected = last run that did not fail; "
+          f"newest record = most recent item from the feed){RESET}")
+    print(f"{DIM}{'-' * 96}{RESET}")
+    print(f"  {'status':<14}{'feed':<20}{'last collected':<16}{'newest record':<16}{'limit':<8}last error")
+    for r in rows:
+        colour = HEALTH_COLOR.get(r["status"], "")
+        limit = f"{r['max_age_days']}d" if r["max_age_days"] else "-"
+        print(f"  {colour}{r['status']:<14}{RESET}{r['collector']:<20}{r['last_collected'] or '-':<16}"
+              f"{r['newest_record'] or '-':<16}{limit:<8}{DIM}{r['last_error'][:40]}{RESET}")
+    bad = problems(rows)
+    print()
+    if bad:
+        print(f"  {RED}{len(bad)} feed(s) failing or stale{RESET}: {', '.join(r['collector'] for r in bad)}\n")
+        if args.fail_on_problems:
+            sys.exit(1)
+    else:
+        print(f"  {GREEN}All collected feeds are current.{RESET}\n")
+
+
+def cmd_backtest(args):
+    from core.backtest import report_markdown, run_backtest, weight_sensitivity
+    from core.scoring_multi import rank_sectors_multi
+    db.init_signals()
+    results = run_backtest(window_days=args.window, horizon_days=args.horizon, step_days=args.step)
+    if not results["anchors"]:
+        print(f"\n{YELLOW}Not enough victim history to backtest.{RESET}\n")
+        return
+    s = results["summary"]
+    print(f"\n{BOLD}Scoring backtest{RESET}  {DIM}{len(results['anchors'])} anchors, "
+          f"{results['settings']['first_anchor']} to {results['settings']['last_anchor']}, "
+          f"{args.window}-day look-back, {args.horizon}-day outcome{RESET}")
+    print(f"  {'ranking':<38}{'Spearman rho':>14}{'capture@3':>12}")
+    labels = {"model": "this model", "model_no_cii": "this model without criticality",
+              "recent_victims": "recent victims only", "cii_only": "CII designation only",
+              "random": "random (expected)"}
+    for key, label in labels.items():
+        m = s[key]
+        print(f"  {label:<38}{str(m['spearman']):>14}{str(m['capture3']):>12}")
+    print(f"\n  Model beat the recent-victims baseline at {s['model_beats_recent']} of "
+          f"{len(results['anchors'])} anchors; anchors with data for all components: "
+          f"{s['anchors_with_all_components']}.")
+    if args.write:
+        scored = rank_sectors_multi(_load_signals(60))
+        text = report_markdown(results, weight_sensitivity(scored), "current 60-day ranking")
+        Path(args.write).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.write).write_text(text, encoding="utf-8")
+        print(f"  Report written to {args.write}")
+    print()
+
+
+def cmd_export(args):
+    from core.export import to_misp_event, to_stix_bundle, write_json
+    from core.iocs import extract_iocs
+    db.init_signals()
+    signals = _load_signals(args.days)
+    iocs = extract_iocs(signals, public_mode=args.public)
+    if not iocs:
+        print(f"\n{YELLOW}No indicators in the last {args.days} days to export.{RESET}\n")
+        return
+    producer = args.prepared_by or os.getenv("ANALYST_NAME", "") or "India Threat Landscape"
+    stamp = datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime("%Y-%m-%d")
+    edition = "Public" if args.public else "Internal"
+    outdir = Path(args.outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    written = []
+    if args.format in ("stix", "both"):
+        path = outdir / f"IOCs_India_Threat_Landscape_{edition}_{stamp}.stix.json"
+        written.append(write_json(to_stix_bundle(iocs, producer, args.public), str(path)))
+    if args.format in ("misp", "both"):
+        path = outdir / f"IOCs_India_Threat_Landscape_{edition}_{stamp}.misp.json"
+        written.append(write_json(to_misp_event(iocs, producer, args.public, stamp), str(path)))
+    print(f"\n{GREEN}Exported {len(iocs)} indicators{RESET}")
+    for path in written:
+        print(f"  {path}")
+    print()
+
+
+def cmd_validate(args):
+    from core.validate import validate_data_files
+    results = validate_data_files()
+    if not results:
+        print(f"\n{GREEN}All data files are valid.{RESET}\n")
+        return
+    print()
+    for name, found in results.items():
+        print(f"{RED}{name}{RESET}")
+        for problem in found:
+            print(f"  - {problem}")
+    print()
+    sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="India Threat Landscape Intelligence (multi-source)")
@@ -466,6 +579,29 @@ def main():
     p.set_defaults(func=cmd_clock)
 
     p = sub.add_parser("stats"); p.set_defaults(func=cmd_stats)
+
+    p = sub.add_parser("health", help="feed freshness and failures")
+    p.add_argument("--fail-on-problems", action="store_true",
+                   help="exit with code 1 when a feed is failing or stale (for CI)")
+    p.set_defaults(func=cmd_health)
+
+    p = sub.add_parser("backtest", help="test sector rankings against later victims")
+    p.add_argument("--window", type=int, default=60, help="look-back days scored at each anchor")
+    p.add_argument("--horizon", type=int, default=30, help="days of outcomes after each anchor")
+    p.add_argument("--step", type=int, default=30, help="days between anchors")
+    p.add_argument("--write", default="", help="write a Markdown report, e.g. docs/BACKTEST.md")
+    p.set_defaults(func=cmd_backtest)
+
+    p = sub.add_parser("export", help="IOC sheet as STIX 2.1 and/or MISP JSON")
+    p.add_argument("--format", choices=["stix", "misp", "both"], default="both")
+    p.add_argument("--days", type=int, default=30)
+    p.add_argument("--public", action="store_true", help="public edition (TLP:CLEAR)")
+    p.add_argument("--outdir", default="exports")
+    p.add_argument("--prepared-by", "--by", default="", dest="prepared_by")
+    p.set_defaults(func=cmd_export)
+
+    p = sub.add_parser("validate", help="check the hand-maintained data files")
+    p.set_defaults(func=cmd_validate)
 
     args = parser.parse_args()
     if not args.command:

@@ -21,3 +21,7 @@ cache/*
 
 # Generated build deliverables
 output/
+exports/
+
+# Run-to-run snapshots are local state (the bundled ones stay tracked)
+data/snapshots/*.json

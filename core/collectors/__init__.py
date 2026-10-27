@@ -17,6 +17,7 @@ from . import phishing            # noqa: F401
 from . import india_specific      # noqa: F401
 from . import research_exposure   # noqa: F401
 from . import news                # noqa: F401
+from . import india_threat_tracker  # noqa: F401
 
 __all__ = ["BaseCollector", "register", "all_collectors",
            "available_collectors"]

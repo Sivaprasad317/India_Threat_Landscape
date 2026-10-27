@@ -242,6 +242,169 @@ class TestCorrelationEngine(unittest.TestCase):
         self.assertEqual(len(shared), 0)
 
 
+class TestCorrelationGrading(unittest.TestCase):
+    def _sig(self, source, stype=SignalType.MALWARE_INFRA, conf=0.5, **entities):
+        return Signal(signal_type=stype, title=f"{source} record", source=source,
+                      observed_at="2026-10-05T00:00:00Z", confidence=conf,
+                      entities=Entities(**entities))
+
+    def test_matches_are_graded_and_only_independent_ones_uplift(self):
+        kev = self._sig("CISA KEV", SignalType.VULNERABILITY, cves=["CVE-2026-1111"])
+        nvd = self._sig("NVD", SignalType.VULNERABILITY, cves=["cve-2026-1111"])
+        fox = self._sig("abuse.ch ThreatFox", domains=["bad.example.in", "www.evil.example.in"])
+        haus = self._sig("abuse.ch URLhaus", domains=["bad.example.in"])
+        phish = self._sig("OpenPhish", SignalType.PHISHING, domains=["evil.example.in", "bad.example.in"])
+        gang_a = self._sig("ransomware.live", SignalType.VICTIM, actors=["Akira"], organisations=["Alpha Ltd"])
+        gang_b = self._sig("OTX", SignalType.RESEARCH, actors=["akira"])
+        result = correlate([kev, nvd, fox, haus, phish, gang_a, gang_b])
+
+        shared = {r["artefact"]: r for r in result["shared_artefacts"]}
+        self.assertEqual(shared["CVE-2026-1111"]["match"], "exact artefact")
+        self.assertFalse(shared["CVE-2026-1111"]["independent"])     # KEV and NVD share an upstream
+        self.assertTrue(shared["bad.example.in"]["independent"])     # abuse.ch + OpenPhish
+        self.assertTrue(shared["evil.example.in"]["independent"])    # www. stripped before matching
+        self.assertEqual({e["source"] for e in shared["bad.example.in"]["evidence"]},
+                         {"abuse.ch ThreatFox", "abuse.ch URLhaus", "OpenPhish"})
+        self.assertNotIn("akira", shared)
+        self.assertEqual([r["artefact"] for r in result["possible_links"]], ["akira"])
+
+        # Confidence rises once, even though ThreatFox shares two artefacts with OpenPhish
+        self.assertAlmostEqual(fox.confidence, 0.575)
+        self.assertAlmostEqual(kev.confidence, 0.5)
+        self.assertAlmostEqual(gang_a.confidence, 0.5)
+        self.assertIn("cross_source_confirmed", phish.tags)
+        self.assertNotIn("cross_source_confirmed", nvd.tags)
+        self.assertEqual(result["independent_artefacts_count"], 2)
+
+    def test_abuse_ch_feeds_are_one_family(self):
+        fox = self._sig("abuse.ch ThreatFox", domains=["same.example.in"])
+        haus = self._sig("abuse.ch URLhaus", domains=["same.example.in"])
+        result = correlate([fox, haus])
+        self.assertEqual(result["shared_artefacts_count"], 1)
+        self.assertEqual(result["independent_artefacts_count"], 0)
+        self.assertEqual(fox.confidence, 0.5)
+
+
+class TestBacktest(unittest.TestCase):
+    def test_rank_metrics(self):
+        from core.backtest import capture_at_k, kendall_tau, spearman
+        self.assertEqual(spearman([1, 2, 3, 4], [10, 20, 30, 40]), 1.0)
+        self.assertEqual(spearman([1, 2, 3, 4], [40, 30, 20, 10]), -1.0)
+        self.assertIsNone(spearman([1, 1, 1], [1, 2, 3]))
+        self.assertEqual(kendall_tau(["a", "b", "c"], ["a", "b", "c"]), 1.0)
+        self.assertEqual(kendall_tau(["c", "b", "a"], ["a", "b", "c"]), -1.0)
+        scores = {"BFSI": 9, "IT_ITES": 8, "HEALTHCARE": 7, "EDUCATION": 1}
+        self.assertEqual(capture_at_k(scores, {"BFSI": 2, "EDUCATION": 2}), 0.5)
+        self.assertIsNone(capture_at_k(scores, {}))
+
+    def test_anchor_uses_no_future_data(self):
+        from datetime import date
+        from core.backtest import evaluate_anchor
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "b.db")
+            db.init_signals(path)
+
+            def victim(org, sector, when):
+                db.upsert_signal(Signal(signal_type=SignalType.VICTIM, title=f"{org} listed", source="ransomware.live",
+                                        observed_at=when, india_relevance=1.0, confidence=0.6, severity=Severity.HIGH,
+                                        sectors=[sector], entities=Entities(organisations=[org])), db_path=path)
+            victim("Past Bank", "BFSI", "2026-03-01T00:00:00+00:00")
+            victim("Future Clinic A", "HEALTHCARE", "2026-03-20T00:00:00+00:00")
+            victim("Future Clinic B", "HEALTHCARE", "2026-03-25T00:00:00+00:00")
+            row = evaluate_anchor(date(2026, 3, 10), window_days=30, horizon_days=30, db_path=path)
+        self.assertEqual(row["future_victims"], 2)
+        self.assertEqual(row["model_top3"][0], "BFSI")          # scored only from the past
+        self.assertEqual(row["actual_top3"][0], "HEALTHCARE")   # outcome comes from after the anchor
+        self.assertEqual(row["components_with_data"], ["impact"])
+
+    def test_bundled_backtest_runs(self):
+        from core.backtest import run_backtest
+        result = run_backtest()
+        self.assertGreaterEqual(len(result["anchors"]), 12)
+        s = result["summary"]
+        # Any sensible ranking should beat a random one on this history
+        self.assertGreater(s["recent_victims"]["spearman"], s["random"]["spearman"])
+        self.assertGreater(s["model"]["spearman"], s["random"]["spearman"])
+
+
+class TestExportsAndTrackerCollector(unittest.TestCase):
+    IOCS = [
+        {"indicator": "bad.example.in", "defanged": "bad[.]example[.]in", "type": "domain",
+         "ioc_role": "compromised_legitimate", "technique": "ClickFix", "malware_family": "",
+         "source_feed": "abuse.ch ThreatFox", "bulletin_confidence": 0.6, "first_seen": "2026-10-05",
+         "last_seen": "2026-10-06", "expiry_date": "2026-10-19", "recommended_action": "alert, notify site owner",
+         "reference_url": "https://threatfox.abuse.ch/ioc/1/", "notes": ""},
+        {"indicator": "https://x.example.in/it's/a.png", "defanged": "hxxps://x[.]example[.]in/...", "type": "url",
+         "ioc_role": "unverified_delivery_host", "technique": "Steganography / Image Staging", "malware_family": "RemcosRAT",
+         "source_feed": "abuse.ch URLhaus", "bulletin_confidence": 0.6, "first_seen": "2026-10-07",
+         "last_seen": "2026-10-07", "expiry_date": "2026-10-21", "recommended_action": "monitor/verify",
+         "reference_url": "", "notes": ""},
+        {"indicator": "203.0.113.5:8443", "defanged": "203[.]0[.]113[.]5:8443", "type": "ip:port",
+         "ioc_role": "unverified_delivery_host", "technique": "Payload Delivery", "malware_family": "",
+         "source_feed": "abuse.ch ThreatFox", "bulletin_confidence": 0.6, "first_seen": "2026-10-08",
+         "last_seen": "2026-10-08", "expiry_date": "2026-10-22", "recommended_action": "monitor/verify",
+         "reference_url": "", "notes": ""},
+    ]
+
+    def test_stix_bundle(self):
+        from core.export import TLP_MARKINGS, to_stix_bundle
+        bundle = to_stix_bundle(self.IOCS + self.IOCS[:1], "Analyst", public_mode=True)
+        self.assertEqual(bundle["type"], "bundle")
+        indicators = [o for o in bundle["objects"] if o["type"] == "indicator"]
+        self.assertEqual(len(indicators), 3)  # duplicate dropped
+        by_type = {i["pattern"].split(":")[0]: i for i in indicators}
+        self.assertEqual(by_type["[domain-name"]["pattern"], "[domain-name:value = 'bad.example.in']")
+        self.assertIn("it\\'s", by_type["[url"]["pattern"])                     # quote escaped
+        self.assertEqual(by_type["[ipv4-addr"]["pattern"], "[ipv4-addr:value = '203.0.113.5']")
+        self.assertEqual(by_type["[domain-name"]["indicator_types"], ["compromised"])
+        for i in indicators:
+            self.assertGreater(i["valid_until"], i["valid_from"])
+            self.assertEqual(i["object_marking_refs"], [TLP_MARKINGS["white"]])
+            self.assertEqual(i["confidence"], 60)
+        # Same input, same identifiers
+        again = to_stix_bundle(self.IOCS, "Analyst", public_mode=True)
+        self.assertEqual(bundle["id"], again["id"])
+        self.assertEqual(to_stix_bundle(self.IOCS, "Analyst")["objects"][1]["name"], "TLP:GREEN")
+
+    def test_misp_event(self):
+        from core.export import to_misp_event
+        event = to_misp_event(self.IOCS, "Analyst", public_mode=True, event_date="2026-10-27")["Event"]
+        types = {a["type"]: a["value"] for a in event["Attribute"]}
+        self.assertEqual(types["domain"], "bad.example.in")
+        self.assertEqual(types["ip-dst|port"], "203.0.113.5|8443")
+        self.assertEqual(event["Tag"][0]["name"], "tlp:clear")
+        self.assertEqual(event["distribution"], "3")
+        self.assertTrue(all(a["to_ids"] for a in event["Attribute"]))
+
+    def test_tracker_parser(self):
+        from core.collectors.india_threat_tracker import parse_tracker
+        apt = {"items": [
+            {"id": "apt-x", "actor": "Transparent Tribe", "status": "active", "confidence": "high",
+             "summary": "Espionage against Indian government using spear-phishing.", "targets": ["indian-government", "education"],
+             "known_tools": ["Crimson RAT"], "last_updated": "2026-10-15", "india_relevance": "high",
+             "sources": [{"title": "Vendor report", "url": "https://vendor.test/report"}]},
+            {"id": "apt-old", "actor": "Old Group", "status": "historical", "summary": "x"}]}
+        smishing = {"items": [
+            {"id": "sm-1", "title": "Fake RTO APK", "status": "active", "confidence": "medium",
+             "summary": "Steals UPI PIN.", "targets": ["UPI customers"], "last_updated": "2026-10-16"}]}
+        csv_text = ("indicator,type,campaign_id,campaign,confidence,source,source_url,source_checked,status\n"
+                    "evil[.]example,domains,sm-1,Fake RTO APK,high,src,https://s.test,2026-10-20,as reported\n"
+                    "ABCDEF,sha256,sm-1,Fake RTO APK,high,src,https://s.test,2026-10-20,as reported\n")
+        sigs = parse_tracker(apt, smishing, csv_text)
+        self.assertEqual(len(sigs), 2)  # historical record skipped
+        apt_sig, sm_sig = sigs
+        self.assertEqual(apt_sig.signal_type, SignalType.RESEARCH)
+        self.assertEqual(apt_sig.sectors, ["EDUCATION", "GOVERNMENT"])
+        self.assertEqual(apt_sig.entities.actors, ["Transparent Tribe"])
+        self.assertEqual(apt_sig.confidence, 0.8)
+        self.assertEqual(apt_sig.source_url, "https://vendor.test/report")
+        self.assertIn("CC BY 4.0", apt_sig.raw["license"])
+        self.assertEqual(sm_sig.sectors, ["BFSI"])
+        self.assertEqual(sm_sig.entities.domains, ["evil.example"])
+        self.assertEqual(sm_sig.entities.hashes, ["abcdef"])
+        self.assertEqual(sm_sig.observed_at, "2026-10-16T00:00:00+00:00")
+
+
 class TestScoring(unittest.TestCase):
     def test_scoring_multi_zero_cap_guard(self):
         sig = Signal(
@@ -301,8 +464,9 @@ class TestIOCManagement(unittest.TestCase):
         summary = get_ioc_summary(sigs)
         self.assertEqual(summary["total_indicators"], 50)
         self.assertEqual(summary["unique_hosts"], 43)
-        self.assertEqual(summary["compromised_hosts"], 18)
-        self.assertEqual(summary["unverified_hosts"], 25)
+        # Compromise status comes from the feed's own is_compromised flag
+        self.assertEqual(summary["compromised_hosts"], 35)
+        self.assertEqual(summary["unverified_hosts"], 8)
         self.assertEqual(summary["phishing_hosts"], 0)
         self.assertEqual(summary["ioc_window_recent_count"], 23)
 
@@ -439,6 +603,201 @@ class TestBulletinQA(unittest.TestCase):
             self.assertIn("PRIORITY DEFENSIVE ACTION", text)
 
 
+class TestFreshDataBulletin(unittest.TestCase):
+    """A bulletin built from data unlike the bundled sample must describe that
+    data: no CVE, product, actor, host or date from the sample may appear."""
+
+    SAMPLE_ONLY = ["CVE-2026-88779", "CVE-2026-76504", "MikroTik", "Citrix", "SonicWall",
+                   "virazofurniture", "ficus", "Krybit", "Clop", "12-Aug", "17 Oct 2026",
+                   "27 Sep - 04 Oct", "(9 Feeds)", "Delhi NCR, Gujarat"]
+
+    def _signals(self):
+        end = datetime(2026, 10, 11, tzinfo=timezone.utc)
+
+        def at(days_ago):
+            return (end - timedelta(days=days_ago)).isoformat()
+
+        sigs = [
+            Signal(signal_type=SignalType.VULNERABILITY, title="CVE-2026-55501 — Fortinet FortiOS: auth bypass",
+                   source="CISA KEV", observed_at=at(3), severity=Severity.CRITICAL, confidence=0.95,
+                   india_relevance=0.8, sectors=["BFSI", "IT_ITES"], entities=Entities(cves=["CVE-2026-55501"]),
+                   raw={"vendorProject": "Fortinet", "product": "FortiOS", "dateAdded": at(3)[:10],
+                        "knownRansomwareCampaignUse": "Known"}),
+            Signal(signal_type=SignalType.VULNERABILITY, title="CVE-2026-55502 — Microsoft Windows: privilege escalation",
+                   source="CISA KEV", observed_at=at(9), severity=Severity.HIGH, confidence=0.95,
+                   india_relevance=0.6, sectors=["GOVERNMENT"], entities=Entities(cves=["CVE-2026-55502"]),
+                   raw={"vendorProject": "Microsoft", "product": "Windows", "dateAdded": at(9)[:10]}),
+            Signal(signal_type=SignalType.ADVISORY, title="CERT-In CIVN-2026-0999: Vulnerability in Fortinet FortiOS",
+                   source="CERT-In", observed_at=at(2), severity=Severity.HIGH, confidence=0.95,
+                   india_relevance=1.0, sectors=["BFSI"], annexure_categories=["vi"],
+                   raw={"reference": "CIVN-2026-0999", "subject": "Vulnerability in Fortinet FortiOS"}),
+            Signal(signal_type=SignalType.MALWARE_INFRA, title="ThreatFox: freshhost-example.in",
+                   source="abuse.ch ThreatFox", observed_at=at(1), severity=Severity.HIGH, confidence=0.75,
+                   india_relevance=0.9, tags=["threatfox", "payload_delivery", "ClickFix"],
+                   entities=Entities(domains=["freshhost-sample.in"]),
+                   raw={"id": 4242, "ioc": "freshhost-sample.in", "threat_type": "payload_delivery",
+                        "ioc_type": "domain", "malware": "", "is_compromised": False}),
+        ]
+        for i, (org, actor, sector, days_ago) in enumerate([
+                ("Pune Gears Pvt Ltd, Pune", "Akira", "MANUFACTURING", 4),
+                ("Hyderabad Clinics, Hyderabad", "Akira", "HEALTHCARE", 6),
+                ("Mumbai Brokers, Mumbai", "Qilin", "BFSI", 8)]):
+            sigs.append(Signal(signal_type=SignalType.VICTIM, title=f"{org} listed by {actor}",
+                               source="ransomware.live", observed_at=at(days_ago), severity=Severity.HIGH,
+                               confidence=0.6, india_relevance=1.0, sectors=[sector],
+                               entities=Entities(organisations=[org], actors=[actor])))
+        return sigs
+
+    def test_fresh_data_passes_qa_without_sample_text(self):
+        import pymupdf
+        from unittest import mock
+        import core.snapshot as snapshot
+        from core.iocs import export_iocs_csv
+        from core.qa import run_qa_audit
+        sigs = self._signals()
+        scored, correl = rank_sectors_multi(sigs), correlate(sigs)
+        by_source = {}
+        for sg in sigs:
+            row = by_source.setdefault((sg.source, sg.signal_type.value),
+                                       {"source": sg.source, "signal_type": sg.signal_type.value,
+                                        "n": 0, "avg_relevance": 0.0})
+            row["n"] += 1
+            row["avg_relevance"] += sg.india_relevance
+        source_summary = [dict(r, avg_relevance=r["avg_relevance"] / r["n"]) for r in by_source.values()]
+        import core.bulletin_multi as bm
+        # Curated headline cards legitimately name products; this test is about telemetry text
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(snapshot, "SNAPSHOTS_DIR", tmp), \
+                mock.patch.object(bm, "load_headline_threats", return_value=[]):
+            pdf_path = os.path.join(tmp, "fresh_2026-10-27.pdf")
+            csv_path = os.path.join(tmp, "IOCs_India_Threat_Landscape_Internal_2026-10-27.csv")
+            bm.build_multi_bulletin(output_path=pdf_path, scored_sectors=scored, signals=sigs,
+                                    correlation=correl, source_summary=source_summary, window_days=30)
+            export_iocs_csv(sigs, csv_path)
+            with mock.patch("core.qa.load_headline_threats", return_value=[]):
+                self.assertTrue(run_qa_audit(sigs, scored, correl, pdf_path, csv_path, window_days=30))
+            doc = pymupdf.open(pdf_path)
+            text = " ".join(" ".join(p.get_text().split()) for p in doc)
+            doc.close()
+            with open(csv_path, encoding="utf-8") as f:
+                csv_text = f.read()
+        for needle in self.SAMPLE_ONLY:
+            self.assertNotIn(needle, text, f"sample-only text '{needle}' leaked into a fresh-data bulletin")
+        self.assertIn("Fortinet FortiOS (CVE-2026-55501)", text)
+        self.assertIn("CIVN-2026-0999", text)
+        self.assertIn("Akira", text)
+        # A host with no recorded ASN lookup is reported as unresolved, never guessed
+        self.assertIn("freshhost-sample.in", csv_text)
+        self.assertIn("unresolved", csv_text)
+        self.assertNotIn("AS13335", csv_text)
+
+
+class TestSourceHealthAndValidation(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = os.path.join(self.tmp.name, "h.db")
+        db.init_db(self.db_path)
+        db.init_signals(self.db_path)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _run(self, collector, when, seen, errors=()):
+        db.record_run(collector, when, when, seen, seen, list(errors), db_path=self.db_path)
+
+    def _signal(self, source, when):
+        db.upsert_signal(Signal(signal_type=SignalType.VULNERABILITY, title=f"{source} {when}",
+                                source=source, observed_at=when), db_path=self.db_path)
+
+    def test_status_per_feed(self):
+        from core.health import problems, source_health
+        now = datetime(2026, 10, 27, tzinfo=timezone.utc)
+        feeds = {
+            "ok_feed":       {"source": "OK Feed", "max_age_days": 3},
+            "old_records":   {"source": "Old Feed", "max_age_days": 3},
+            "broken":        {"source": "Broken Feed", "max_age_days": 3},
+            "flaky":         {"source": "Flaky Feed", "max_age_days": 3},
+            "never":         {"source": "Never Feed", "max_age_days": 3},
+            "manual":        {"source": None, "max_age_days": None},
+        }
+        self._run("ok_feed", "2026-10-27T01:00:00+00:00", 5)
+        self._signal("OK Feed", "2026-10-26T00:00:00+00:00")
+        self._run("old_records", "2026-10-27T01:00:00+00:00", 5)
+        self._signal("Old Feed", "2026-09-01T00:00:00+00:00")
+        self._run("broken", "2026-10-20T01:00:00+00:00", 5)
+        self._run("broken", "2026-10-27T01:00:00+00:00", 0, ["timeout"])
+        self._run("flaky", "2026-10-27T01:00:00+00:00", 5, ["HTTP 503 (attempt 1/3)"])
+        self._signal("Flaky Feed", "2026-10-26T00:00:00+00:00")
+        self._run("manual", "2026-10-01T01:00:00+00:00", 0)
+        rows = {r["collector"]: r for r in source_health(now=now, db_path=self.db_path, feeds=feeds)}
+        self.assertEqual(rows["ok_feed"]["status"], "OK")
+        self.assertEqual(rows["old_records"]["status"], "STALE")  # fresh run, old data
+        self.assertEqual(rows["broken"]["status"], "FAILING")
+        self.assertEqual(rows["broken"]["last_collected"], "2026-10-20")
+        self.assertEqual(rows["flaky"]["status"], "DEGRADED")
+        self.assertEqual(rows["never"]["status"], "NOT COLLECTED")
+        self.assertEqual(rows["manual"]["status"], "MANUAL")
+        self.assertEqual({r["collector"] for r in problems(list(rows.values()))}, {"old_records", "broken"})
+
+    def test_bundled_data_files_are_valid(self):
+        from core.validate import validate_data_files
+        self.assertEqual(validate_data_files(), {})
+
+    def test_validation_catches_mistakes(self):
+        import json
+        from core.validate import validate_data_files
+        files = {
+            "hacktivist_claims.json": [{"group": "X", "target": "a.gov.in", "claimed_at": "yesterday",
+                                        "sector": "BANKS", "verified": "no"}],
+            "leak_observations.json": [{"forum": "BF", "target": "Bank", "observed_at": "2026-10-01T00:00:00Z",
+                                        "claimed_records": "lots"}],
+            "entity_overrides.json": {"entries": [{"match": ["acme"], "state": "Atlantis"}]},
+            "headline_threats.json": [{"id": "a"}],
+        }
+        for name, doc in files.items():
+            with open(os.path.join(self.tmp.name, name), "w", encoding="utf-8") as f:
+                json.dump(doc, f)
+        found = validate_data_files(self.tmp.name)
+        self.assertEqual(set(found), set(files))
+        self.assertTrue(any("claimed_at" in p for p in found["hacktivist_claims.json"]))
+        self.assertTrue(any("BANKS" in p for p in found["hacktivist_claims.json"]))
+        self.assertTrue(any("claimed_records" in p for p in found["leak_observations.json"]))
+        self.assertTrue(any("Atlantis" in p for p in found["entity_overrides.json"]))
+        self.assertTrue(any("reason" in p for p in found["entity_overrides.json"]))
+
+    def test_collector_retries_transient_errors_only(self):
+        import asyncio
+        import httpx
+        from core.collectors.base import BaseCollector
+
+        calls = {"flaky": 0, "missing": 0}
+
+        def handler(request):
+            key = request.url.path.strip("/")
+            calls[key] += 1
+            if key == "flaky":
+                return httpx.Response(503) if calls[key] < 3 else httpx.Response(200, json={"ok": True})
+            return httpx.Response(404)
+
+        class Probe(BaseCollector):
+            name = "probe"
+            backoff_seconds = 0.001
+
+            async def collect(self):
+                return []
+
+        async def go(probe):
+            async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+                return (await probe.get_json(client, "http://feed.test/flaky"),
+                        await probe.get_json(client, "http://feed.test/missing"))
+
+        probe = Probe()
+        flaky, missing = asyncio.run(go(probe))
+        self.assertEqual(flaky, {"ok": True})
+        self.assertIsNone(missing)
+        self.assertEqual(calls, {"flaky": 3, "missing": 1})
+        self.assertEqual(len(probe.errors), 3)
+
+
 class TestHeadlineThreats(unittest.TestCase):
     def _entry(self, **overrides):
         entry = {
@@ -485,6 +844,28 @@ class TestHeadlineThreats(unittest.TestCase):
             loaded = load_headline_threats(path, start=date(2026, 9, 1),
                                            end=date(2026, 10, 27))
         self.assertEqual([e["id"] for e in loaded], ["crit", "high"])
+
+    def test_india_direct_sorts_first_and_split(self):
+        import json
+        from core.headlines import brief_text, load_headline_threats, split_headlines
+        entries = [
+            self._entry(id="global-high", date="2026-10-22"),
+            self._entry(id="india-high", date="2026-10-10", india_direct=True),
+            self._entry(id="global-crit", severity="Critical", date="2026-10-01",
+                        summary="First sentence. Second sentence."),
+            self._entry(id="bad-flag", india_direct="yes"),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "h.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(entries, f)
+            loaded = load_headline_threats(path)
+        self.assertEqual([e["id"] for e in loaded], ["global-crit", "india-high", "global-high"])
+        cards, brief = split_headlines(loaded)
+        self.assertEqual([e["id"] for e in cards], ["global-crit", "india-high"])
+        self.assertEqual([e["id"] for e in brief], ["global-high"])
+        self.assertEqual(brief_text(loaded[0]), "First sentence.")
+        self.assertEqual(brief_text(self._entry(brief="Short.")), "Short.")
 
     def test_news_watch_drops_covered_stories(self):
         from core.headlines import headline_keywords, news_watch
@@ -555,6 +936,7 @@ class TestBulletinThreatsInFocus(unittest.TestCase):
         self.assertIn("In this report", pages[0])
         self.assertIn("Bottom line", pages[0])
         self.assertIn("01 Threats in Focus", pages[1])
+        self.assertIn("This Month at a Glance", pages[1])
         full = " ".join(pages)
         for title in ("PHP2Shell: unauthenticated remote code execution in the PHP engine",
                       "LiteLLM supply-chain attack",

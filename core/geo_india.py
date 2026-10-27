@@ -13,60 +13,53 @@ import re
 from typing import Dict, List, Optional, Tuple
 from PIL import Image, ImageDraw, ImageFont
 
+from .overrides import entity_override
+
 # Mapping of keywords, cities, industrial estates, and institutions to Indian States
+# Cities, districts and industrial towns per state. Named organisations are
+# placed through data/entity_overrides.json, never by pattern here.
 STATE_PATTERNS = {
     "Maharashtra": [
         r"\bmumbai\b", r"\bpune\b", r"\bthane\b", r"\bshirdi\b", r"\bdhule\b",
         r"\bpalghar\b", r"\bnashik\b", r"\bnagpur\b", r"\bnavi mumbai\b",
-        r"\bsai\.org\.in\b", r"\bsaibaba\b", r"\batomberg\b", r"\blabindia\b",
-        r"\bvedantaa\b", r"\buniversal starch\b", r"\bshalina\b", r"\blicindia\b",
     ],
     "Delhi NCR": [
         r"\bdelhi\b", r"\bnew delhi\b", r"\bnoida\b", r"\bgurgaon\b", r"\bgurugram\b",
-        r"\bfaridabad\b", r"\bghaziabad\b", r"\buniversity of delhi\b",
-        r"\bswadeshi\b", r"\bi2k2\b", r"\bbonjour\b", r"\bjpmgroup\b",
-        r"\bjindal\b", r"\bqcpl\b",
+        r"\bfaridabad\b", r"\bghaziabad\b",
     ],
     "Karnataka": [
         r"\bbengaluru\b", r"\bbangalore\b", r"\bmanipal\b", r"\bmysuru\b",
-        r"\bmysore\b", r"\bmangalore\b", r"\bhubli\b", r"\bindic\b",
-        r"\br l fine\b", r"\bdodopayments\b", r"\bmahe\b",
+        r"\bmysore\b", r"\bmangalore\b", r"\bhubli\b",
     ],
     "Tamil Nadu": [
         r"\bchennai\b", r"\bvellore\b", r"\bcoimbatore\b", r"\bdindigul\b",
-        r"\bmadurai\b", r"\btiruchirappalli\b", r"\bsalem\b", r"\bvit\.ac\.in\b",
-        r"\bags cinemas\b", r"\bbgr energy\b", r"\bsouthsign\b",
+        r"\bmadurai\b", r"\btiruchirappalli\b", r"\bsalem\b",
     ],
     "Gujarat": [
         r"\bahmedabad\b", r"\bsurat\b", r"\bvapi\b", r"\bankleshwar\b",
         r"\bpalsana\b", r"\brajkot\b", r"\bvadodara\b", r"\bbaroda\b",
-        r"\bgandhinagar\b", r"\braajratna\b", r"\bchem process\b",
-        r"\bsiddhi green\b", r"\bannapurna fashion\b", r"\bsoni dwarkadas\b",
+        r"\bgandhinagar\b",
     ],
     "Rajasthan": [
         r"\bjaipur\b", r"\budaipur\b", r"\bjodhpur\b", r"\bjawai\b",
-        r"\bpali\b", r"\bkota\b", r"\bpraveg\b", r"\bg r infra\b",
+        r"\bpali\b", r"\bkota\b",
     ],
     "Telangana & AP": [
         r"\bhyderabad\b", r"\bsecunderabad\b", r"\bcyberabad\b", r"\bvijayawada\b",
-        r"\bvisakhapatnam\b", r"\bguntur\b", r"\btirupati\b", r"\bincor\b",
-        r"\bco-op urban bank\b", r"\bkarkinos\b",
+        r"\bvisakhapatnam\b", r"\bguntur\b", r"\btirupati\b",
     ],
     "Uttarakhand": [
         r"\broorkee\b", r"\bdehradun\b", r"\bharidwar\b", r"\bpantnagar\b",
-        r"\biit roorkee\b",
     ],
     "Chhattisgarh": [
         r"\bbhilai\b", r"\braipur\b", r"\bdurg\b", r"\bbilaspur\b",
-        r"\bsimplexengg\b", r"\bsimplex engineering\b",
     ],
     "Punjab & Chandigarh": [
         r"\bchandigarh\b", r"\bmohali\b", r"\bludhiana\b", r"\bamritsar\b",
-        r"\bjalandhar\b", r"\bseasia\b",
+        r"\bjalandhar\b",
     ],
     "Haryana": [
-        r"\bpanipt\b", r"\bkarnal\b", r"\brohtak\b", r"\bhisar\b",
-        r"\bgindre\b",
+        r"\bpanipat\b", r"\bkarnal\b", r"\brohtak\b", r"\bhisar\b",
     ],
     "West Bengal": [
         r"\bkolkata\b", r"\bcalcutta\b", r"\bhowrah\b", r"\bdurgapur\b",
@@ -99,23 +92,15 @@ def classify_state(victim_name: str, description: str = "") -> str:
     """
     Infers the targeted Indian State from the victim entity name and description.
     """
+    override = entity_override(victim_name)
+    if override and override.get("state"):
+        return override["state"]
+
     text = f"{victim_name} {description}".lower()
-
-    if "vi***in" in text:
-        return "Location Unresolved"
-
     for state, patterns in COMPILED_PATTERNS.items():
         for pat in patterns:
             if pat.search(text):
                 return state
-
-    # Fallback heuristics for common terms
-    if "bank" in text or "finance" in text:
-        return "Maharashtra"
-    if "tech" in text or "software" in text:
-        return "Karnataka"
-    if "infra" in text or "steel" in text:
-        return "Gujarat"
 
     return "Location Unresolved"
 

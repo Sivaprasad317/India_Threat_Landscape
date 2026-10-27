@@ -1,19 +1,29 @@
 """
-Cross-source correlation.
+Cross-source correlation, with the evidence for every link.
 
-This is what makes multiple sources worth more than the sum of their feeds.
 A single source tells you something happened. Two independent sources
-agreeing tells you it probably really happened, and three pointing at the
-same CVE or actor tells you where to spend the week.
+agreeing tells you it probably really happened. Two records that merely
+share a name tell you very little, so matches are graded:
 
-Three correlation passes:
+  strong        the same CVE, hash, domain, IP, URL or onion address
+  organisation  the same named organisation (after name normalisation)
+  weak          only an actor or malware-family name in common
 
-  Shared artefact   the same CVE, domain, IP, hash or organisation appears
-                    in signals from different sources
-  Actor chain       a group named on a leak site also appears in malware
-                    infrastructure or hacktivist claims
+Strong and organisation matches across two or more feeds are reported as
+shared artefacts. Weak matches are listed separately as possible links and
+never count as corroboration.
+
+Feeds that share an upstream (CISA KEV and NVD; ransomware.live and
+ransomlook.io; the abuse.ch feeds) are one family: agreement inside a family
+is "seen in multiple feeds" but not independent corroboration, and only
+independent corroboration raises a signal's confidence.
+
+Three passes:
+
+  Shared artefact   graded matches across feeds, with per-source evidence
+  Actor chain       a group name seen in different kinds of signal (weak)
   Exploit-to-victim an actively exploited CVE affects a sector that is
-                    concurrently seeing victims
+                    concurrently seeing victims (co-occurrence, not cause)
 """
 
 from collections import defaultdict
@@ -25,38 +35,91 @@ from .signals import Signal, SignalType
 
 GENERIC_ARTEFACTS = {"unknown", "none", "n/a", "not found", "undefined", "generic", "null"}
 
+STRONG_FIELDS = ("cves", "hashes", "domains", "ips", "urls", "onions")
+ENTITY_FIELDS = ("organisations",)
+WEAK_FIELDS = ("actors", "malware_families")
 
-def _artefact_index(signals: List[Signal]) -> Dict[str, Set[str]]:
-    """Map each artefact value to the set of signal ids mentioning it."""
-    index: Dict[str, Set[str]] = defaultdict(set)
+MATCH_LABEL = {"strong": "exact artefact", "organisation": "same organisation", "weak": "name only"}
+
+# Feeds that share an upstream source count as one family
+SOURCE_FAMILIES = {
+    "CISA KEV": "cve-catalogue", "NVD": "cve-catalogue",
+    "ransomware.live": "leak-site-trackers", "ransomlook.io": "leak-site-trackers",
+    "abuse.ch ThreatFox": "abuse.ch", "abuse.ch URLhaus": "abuse.ch",
+    "abuse.ch MalwareBazaar": "abuse.ch",
+}
+
+CONFIDENCE_UPLIFT = 1.15
+CONFIDENCE_CAP = 0.85
+
+
+def source_family(source: str) -> str:
+    return SOURCE_FAMILIES.get(source, source)
+
+
+def _normalise(field: str, value: str) -> str:
+    v = (value or "").strip()
+    if field == "cves":
+        return v.upper()
+    if field == "domains":
+        v = v.lower()
+        return v[4:] if v.startswith("www.") else v
+    if field == "organisations":
+        return clean_victim_name(v).strip().lower()
+    return v.lower()
+
+
+def _strength(field: str) -> str:
+    if field in STRONG_FIELDS:
+        return "strong"
+    if field in ENTITY_FIELDS:
+        return "organisation"
+    return "weak"
+
+
+def _artefact_index(signals: List[Signal]) -> Dict[Tuple[str, str], Set[str]]:
+    """Map (field, normalised value) to the ids of signals carrying it."""
+    index: Dict[Tuple[str, str], Set[str]] = defaultdict(set)
     for sig in signals:
-        for value in sig.entities.all_values():
-            key = value.strip().lower()
-            if len(key) < 4 or key in GENERIC_ARTEFACTS:
-                continue
-            index[key].add(sig.signal_id)
+        for field in STRONG_FIELDS + ENTITY_FIELDS + WEAK_FIELDS:
+            for value in getattr(sig.entities, field, []) or []:
+                key = _normalise(field, value)
+                if len(key) < 4 or key in GENERIC_ARTEFACTS:
+                    continue
+                index[(field, key)].add(sig.signal_id)
     return index
 
 
-def find_shared_artefacts(signals: List[Signal],
-                          min_sources: int = 2) -> List[Dict]:
-    """Artefacts seen by more than one independent source."""
-    by_id = {s.signal_id: s for s in signals}
-    index = _artefact_index(signals)
-    results = []
+def _evidence(sigs: List[Signal]) -> List[Dict]:
+    """The earliest record from each source that carries the artefact."""
+    first: Dict[str, Signal] = {}
+    for s in sorted(sigs, key=lambda x: x.observed_at or ""):
+        first.setdefault(s.source, s)
+    return [{"source": src, "observed_at": (s.observed_at or "")[:10],
+             "title": s.title[:110], "url": s.source_url or ""}
+            for src, s in sorted(first.items())]
 
-    for artefact, ids in index.items():
-        if len(ids) < 2:
-            continue
-        sources = {by_id[i].source for i in ids if i in by_id}
+
+def _graded_matches(signals: List[Signal], min_sources: int = 2) -> List[Dict]:
+    by_id = {s.signal_id: s for s in signals}
+    results = []
+    for (field, artefact), ids in _artefact_index(signals).items():
+        involved = [by_id[i] for i in ids if i in by_id]
+        sources = sorted({s.source for s in involved})
         if len(sources) < min_sources:
             continue
-
-        involved = [by_id[i] for i in ids if i in by_id]
+        families = sorted({source_family(src) for src in sources})
+        strength = _strength(field)
         results.append({
             "artefact": artefact,
+            "field": field,
+            "strength": strength,
+            "match": MATCH_LABEL[strength],
             "source_count": len(sources),
-            "sources": sorted(sources),
+            "sources": sources,
+            "families": families,
+            "independent": len(families) >= 2,
+            "signal_ids": sorted(ids),
             "signal_count": len(involved),
             "signal_types": sorted({s.signal_type.value for s in involved}),
             "titles": [s.title[:110] for s in involved[:5]],
@@ -65,14 +128,29 @@ def find_shared_artefacts(signals: List[Signal],
                 (s.severity.value for s in involved),
                 key=lambda v: ["Informational", "Low", "Medium",
                                "High", "Critical"].index(v)),
+            "evidence": _evidence(involved),
         })
-
-    results.sort(key=lambda r: (-r["source_count"], -r["signal_count"]))
+    results.sort(key=lambda r: (["strong", "organisation", "weak"].index(r["strength"]),
+                                not r["independent"], -r["source_count"], -r["signal_count"], r["artefact"]))
     return results
 
 
+def find_shared_artefacts(signals: List[Signal],
+                          min_sources: int = 2) -> List[Dict]:
+    """Strong and organisation matches seen by more than one feed."""
+    return [r for r in _graded_matches(signals, min_sources) if r["strength"] != "weak"]
+
+
+def find_possible_links(signals: List[Signal], min_sources: int = 2) -> List[Dict]:
+    """Name-only matches (actors, malware families): listed, never counted."""
+    return [r for r in _graded_matches(signals, min_sources) if r["strength"] == "weak"]
+
+
 def find_actor_chains(signals: List[Signal]) -> List[Dict]:
-    """A single actor appearing across different kinds of signal."""
+    """A single actor name appearing across different kinds of signal.
+
+    This is a name match, not proof of one campaign: groups share names,
+    affiliates rebrand, and feeds spell names differently."""
     by_actor: Dict[str, List[Signal]] = defaultdict(list)
     for sig in signals:
         for actor in sig.entities.actors:
@@ -88,6 +166,7 @@ def find_actor_chains(signals: List[Signal]) -> List[Dict]:
         sectors = sorted({sec for s in sigs for sec in s.sectors})
         chains.append({
             "actor": actor,
+            "match": MATCH_LABEL["weak"],
             "signal_count": len(sigs),
             "signal_types": sorted(t.value for t in types),
             "sources": sorted({s.source for s in sigs}),
@@ -146,12 +225,15 @@ def find_exploit_to_victim_links(signals: List[Signal]) -> List[Dict]:
                 "ransomware_linked": "ransomware-campaign-use" in vuln.tags,
                 "edge_device": "edge-device" in vuln.tags,
                 "victim_count": len(unique_org_names),
-                "victim_examples": [
+                "victim_examples": list(dict.fromkeys(
                     f"{clean_victim_name(h.entities.organisations[0])} ({h.entities.actors[0]})"
                     if (h.entities.actors and h.entities.actors[0] and h.entities.actors[0].strip().lower() not in ("unknown", "none", ""))
                     else clean_victim_name(h.entities.organisations[0])
-                    for h in hits[:4]
-                    if h.entities.organisations],
+                    for h in hits
+                    if h.entities.organisations))[:4],
+                "why": (f"{cve_id} affects technology mapped to this sector, and {len(unique_org_names)} "
+                        f"organisation{'s' if len(unique_org_names) != 1 else ''} in the sector were named on leak "
+                        f"sites in the same window. Co-occurrence, not evidence of the entry point."),
                 "groups": sorted({g for h in hits for g in h.entities.actors
                                   if g and g.strip().lower() not in ("unknown", "")}),
             })
@@ -162,45 +244,42 @@ def find_exploit_to_victim_links(signals: List[Signal]) -> List[Dict]:
 
 
 def correlate(signals: List[Signal]) -> Dict:
-    """Run every pass and return a bundle for the bulletin."""
-    shared = find_shared_artefacts(signals)
+    """Run every pass and return a bundle for the bulletin.
+
+    Signals backed by an independent strong or organisation match get their
+    confidence raised once (x1.15, capped at 0.85) and a cross_source_confirmed
+    tag; this mutates the signals, so run it before scoring.
+    """
+    graded = _graded_matches(signals)
+    shared = [r for r in graded if r["strength"] != "weak"]
+    possible = [r for r in graded if r["strength"] == "weak"]
     chains = find_actor_chains(signals)
     links = find_exploit_to_victim_links(signals)
 
-    # Feeds sharing common upstream parents do not receive an independence confidence uplift
-    SHARED_PARENT_GROUPS = [
-        {"CISA KEV", "NVD"},
-        {"ransomware.live", "ransomlook.io"},
-    ]
-
-    seen_multiple_ids: Set[str] = set()
     by_id = {s.signal_id: s for s in signals}
-    index = _artefact_index(signals)
-    for artefact, ids in index.items():
-        sources = {by_id[i].source for i in ids if i in by_id}
-        if len(sources) >= 2:
-            seen_multiple_ids.update(ids)
-            # Only apply confidence uplift if sources span truly independent feed families
-            is_shared_parent_only = any(sources.issubset(grp) for grp in SHARED_PARENT_GROUPS)
-            if not is_shared_parent_only:
-                for sid in ids:
-                    sig = by_id.get(sid)
-                    if sig:
-                        sig.confidence = min(round(sig.confidence * 1.15, 3), 0.85)
-                        if "cross_source_confirmed" not in sig.tags:
-                            sig.tags.append("cross_source_confirmed")
+    seen_multiple_ids: Set[str] = {sid for r in shared for sid in r["signal_ids"]}
+    independent_ids: Set[str] = {sid for r in shared if r["independent"] for sid in r["signal_ids"]}
 
     for sid in seen_multiple_ids:
         sig = by_id.get(sid)
         if sig and "seen_multiple_feeds" not in sig.tags:
             sig.tags.append("seen_multiple_feeds")
+    for sid in independent_ids:
+        sig = by_id.get(sid)
+        if sig and "cross_source_confirmed" not in sig.tags:
+            sig.confidence = min(round(sig.confidence * CONFIDENCE_UPLIFT, 3), CONFIDENCE_CAP)
+            sig.tags.append("cross_source_confirmed")
 
     return {
         "shared_artefacts": shared[:40],
         "shared_artefacts_count": len(shared),
+        "independent_artefacts_count": sum(1 for r in shared if r["independent"]),
+        "possible_links": possible[:20],
+        "possible_links_count": len(possible),
         "actor_chains": chains[:20],
         "exploit_victim_links": links[:20],
         "corroborated_count": len(seen_multiple_ids),
         "seen_multiple_count": len(seen_multiple_ids),
+        "independently_corroborated_count": len(independent_ids),
         "total_signals": len(signals),
     }
