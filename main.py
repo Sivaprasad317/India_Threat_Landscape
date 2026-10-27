@@ -21,6 +21,7 @@ Usage
   python main.py health                     feed freshness and failures
   python main.py validate                   check hand-maintained data files
   python main.py backtest --write docs/BACKTEST.md
+  python main.py export --format both --public   STIX 2.1 + MISP for CTI platforms
 """
 
 import argparse
@@ -490,6 +491,33 @@ def cmd_backtest(args):
     print()
 
 
+def cmd_export(args):
+    from core.export import to_misp_event, to_stix_bundle, write_json
+    from core.iocs import extract_iocs
+    db.init_signals()
+    signals = _load_signals(args.days)
+    iocs = extract_iocs(signals, public_mode=args.public)
+    if not iocs:
+        print(f"\n{YELLOW}No indicators in the last {args.days} days to export.{RESET}\n")
+        return
+    producer = args.prepared_by or os.getenv("ANALYST_NAME", "") or "India Threat Landscape"
+    stamp = datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime("%Y-%m-%d")
+    edition = "Public" if args.public else "Internal"
+    outdir = Path(args.outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    written = []
+    if args.format in ("stix", "both"):
+        path = outdir / f"IOCs_India_Threat_Landscape_{edition}_{stamp}.stix.json"
+        written.append(write_json(to_stix_bundle(iocs, producer, args.public), str(path)))
+    if args.format in ("misp", "both"):
+        path = outdir / f"IOCs_India_Threat_Landscape_{edition}_{stamp}.misp.json"
+        written.append(write_json(to_misp_event(iocs, producer, args.public, stamp), str(path)))
+    print(f"\n{GREEN}Exported {len(iocs)} indicators{RESET}")
+    for path in written:
+        print(f"  {path}")
+    print()
+
+
 def cmd_validate(args):
     from core.validate import validate_data_files
     results = validate_data_files()
@@ -563,6 +591,14 @@ def main():
     p.add_argument("--step", type=int, default=30, help="days between anchors")
     p.add_argument("--write", default="", help="write a Markdown report, e.g. docs/BACKTEST.md")
     p.set_defaults(func=cmd_backtest)
+
+    p = sub.add_parser("export", help="IOC sheet as STIX 2.1 and/or MISP JSON")
+    p.add_argument("--format", choices=["stix", "misp", "both"], default="both")
+    p.add_argument("--days", type=int, default=30)
+    p.add_argument("--public", action="store_true", help="public edition (TLP:CLEAR)")
+    p.add_argument("--outdir", default="exports")
+    p.add_argument("--prepared-by", "--by", default="", dest="prepared_by")
+    p.set_defaults(func=cmd_export)
 
     p = sub.add_parser("validate", help="check the hand-maintained data files")
     p.set_defaults(func=cmd_validate)

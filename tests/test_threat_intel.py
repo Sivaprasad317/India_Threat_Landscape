@@ -327,6 +327,84 @@ class TestBacktest(unittest.TestCase):
         self.assertGreater(s["model"]["spearman"], s["random"]["spearman"])
 
 
+class TestExportsAndTrackerCollector(unittest.TestCase):
+    IOCS = [
+        {"indicator": "bad.example.in", "defanged": "bad[.]example[.]in", "type": "domain",
+         "ioc_role": "compromised_legitimate", "technique": "ClickFix", "malware_family": "",
+         "source_feed": "abuse.ch ThreatFox", "bulletin_confidence": 0.6, "first_seen": "2026-10-05",
+         "last_seen": "2026-10-06", "expiry_date": "2026-10-19", "recommended_action": "alert, notify site owner",
+         "reference_url": "https://threatfox.abuse.ch/ioc/1/", "notes": ""},
+        {"indicator": "https://x.example.in/it's/a.png", "defanged": "hxxps://x[.]example[.]in/...", "type": "url",
+         "ioc_role": "unverified_delivery_host", "technique": "Steganography / Image Staging", "malware_family": "RemcosRAT",
+         "source_feed": "abuse.ch URLhaus", "bulletin_confidence": 0.6, "first_seen": "2026-10-07",
+         "last_seen": "2026-10-07", "expiry_date": "2026-10-21", "recommended_action": "monitor/verify",
+         "reference_url": "", "notes": ""},
+        {"indicator": "203.0.113.5:8443", "defanged": "203[.]0[.]113[.]5:8443", "type": "ip:port",
+         "ioc_role": "unverified_delivery_host", "technique": "Payload Delivery", "malware_family": "",
+         "source_feed": "abuse.ch ThreatFox", "bulletin_confidence": 0.6, "first_seen": "2026-10-08",
+         "last_seen": "2026-10-08", "expiry_date": "2026-10-22", "recommended_action": "monitor/verify",
+         "reference_url": "", "notes": ""},
+    ]
+
+    def test_stix_bundle(self):
+        from core.export import TLP_MARKINGS, to_stix_bundle
+        bundle = to_stix_bundle(self.IOCS + self.IOCS[:1], "Analyst", public_mode=True)
+        self.assertEqual(bundle["type"], "bundle")
+        indicators = [o for o in bundle["objects"] if o["type"] == "indicator"]
+        self.assertEqual(len(indicators), 3)  # duplicate dropped
+        by_type = {i["pattern"].split(":")[0]: i for i in indicators}
+        self.assertEqual(by_type["[domain-name"]["pattern"], "[domain-name:value = 'bad.example.in']")
+        self.assertIn("it\\'s", by_type["[url"]["pattern"])                     # quote escaped
+        self.assertEqual(by_type["[ipv4-addr"]["pattern"], "[ipv4-addr:value = '203.0.113.5']")
+        self.assertEqual(by_type["[domain-name"]["indicator_types"], ["compromised"])
+        for i in indicators:
+            self.assertGreater(i["valid_until"], i["valid_from"])
+            self.assertEqual(i["object_marking_refs"], [TLP_MARKINGS["white"]])
+            self.assertEqual(i["confidence"], 60)
+        # Same input, same identifiers
+        again = to_stix_bundle(self.IOCS, "Analyst", public_mode=True)
+        self.assertEqual(bundle["id"], again["id"])
+        self.assertEqual(to_stix_bundle(self.IOCS, "Analyst")["objects"][1]["name"], "TLP:GREEN")
+
+    def test_misp_event(self):
+        from core.export import to_misp_event
+        event = to_misp_event(self.IOCS, "Analyst", public_mode=True, event_date="2026-10-27")["Event"]
+        types = {a["type"]: a["value"] for a in event["Attribute"]}
+        self.assertEqual(types["domain"], "bad.example.in")
+        self.assertEqual(types["ip-dst|port"], "203.0.113.5|8443")
+        self.assertEqual(event["Tag"][0]["name"], "tlp:clear")
+        self.assertEqual(event["distribution"], "3")
+        self.assertTrue(all(a["to_ids"] for a in event["Attribute"]))
+
+    def test_tracker_parser(self):
+        from core.collectors.india_threat_tracker import parse_tracker
+        apt = {"items": [
+            {"id": "apt-x", "actor": "Transparent Tribe", "status": "active", "confidence": "high",
+             "summary": "Espionage against Indian government using spear-phishing.", "targets": ["indian-government", "education"],
+             "known_tools": ["Crimson RAT"], "last_updated": "2026-10-15", "india_relevance": "high",
+             "sources": [{"title": "Vendor report", "url": "https://vendor.test/report"}]},
+            {"id": "apt-old", "actor": "Old Group", "status": "historical", "summary": "x"}]}
+        smishing = {"items": [
+            {"id": "sm-1", "title": "Fake RTO APK", "status": "active", "confidence": "medium",
+             "summary": "Steals UPI PIN.", "targets": ["UPI customers"], "last_updated": "2026-10-16"}]}
+        csv_text = ("indicator,type,campaign_id,campaign,confidence,source,source_url,source_checked,status\n"
+                    "evil[.]example,domains,sm-1,Fake RTO APK,high,src,https://s.test,2026-10-20,as reported\n"
+                    "ABCDEF,sha256,sm-1,Fake RTO APK,high,src,https://s.test,2026-10-20,as reported\n")
+        sigs = parse_tracker(apt, smishing, csv_text)
+        self.assertEqual(len(sigs), 2)  # historical record skipped
+        apt_sig, sm_sig = sigs
+        self.assertEqual(apt_sig.signal_type, SignalType.RESEARCH)
+        self.assertEqual(apt_sig.sectors, ["EDUCATION", "GOVERNMENT"])
+        self.assertEqual(apt_sig.entities.actors, ["Transparent Tribe"])
+        self.assertEqual(apt_sig.confidence, 0.8)
+        self.assertEqual(apt_sig.source_url, "https://vendor.test/report")
+        self.assertIn("CC BY 4.0", apt_sig.raw["license"])
+        self.assertEqual(sm_sig.sectors, ["BFSI"])
+        self.assertEqual(sm_sig.entities.domains, ["evil.example"])
+        self.assertEqual(sm_sig.entities.hashes, ["abcdef"])
+        self.assertEqual(sm_sig.observed_at, "2026-10-16T00:00:00+00:00")
+
+
 class TestScoring(unittest.TestCase):
     def test_scoring_multi_zero_cap_guard(self):
         sig = Signal(

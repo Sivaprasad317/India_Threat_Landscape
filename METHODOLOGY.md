@@ -33,6 +33,7 @@ named organisation, or legal advice on CERT-In reporting.
 | `crtsh_typosquat` | Lookalike domains for Indian brands | crt.sh | 14 days |
 | `otx` | Campaign reporting naming India | AlienVault OTX | 14 days |
 | `shodan_exposure` | Aggregate Indian attack-surface counts (no host lists) | Shodan | 14 days |
+| `india_threat_tracker` | Curated APT and UPI-smishing campaigns (CC BY 4.0, Sohan Kanna) as campaign reporting | India Threat Tracker | 45 days |
 | `security_news` | News headlines (kept out of scoring) | n/a | 3 days |
 | `hacktivism`, `leak_tracker` | Analyst-logged claims from `data/*.json` | analyst | manual |
 
@@ -213,6 +214,13 @@ weight rises.
   `unresolved`, never guessed.
 - Indicators expire 14 days after first seen. Text in the bulletin is
   defanged (`hxxp`, `[.]`); the CSV keeps both raw and defanged forms.
+
+---
+
+**Exports.** `python main.py export` writes the same indicators as a STIX 2.1
+bundle (validated with the OASIS `stix2` library during development) and a
+MISP event, with stable IDs, the CSV's roles, actions, confidence and expiry,
+and TLP marking (public: TLP:WHITE / `tlp:clear`; internal: TLP:GREEN).
 
 ---
 

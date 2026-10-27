@@ -34,6 +34,7 @@ FEEDS: Dict[str, Dict] = {
     "otx":               {"source": "AlienVault OTX", "max_age_days": 14},
     "shodan_exposure":   {"source": "Shodan (aggregate counts)", "max_age_days": 14},
     "security_news":     {"source": None, "max_age_days": 3},
+    "india_threat_tracker": {"source": "India Threat Tracker", "max_age_days": 45},
     # Analyst-maintained files: freshness depends on the analyst, not a feed
     "hacktivism":        {"source": "Hacktivist claim tracking", "max_age_days": None},
     "leak_tracker":      {"source": None, "max_age_days": None},
