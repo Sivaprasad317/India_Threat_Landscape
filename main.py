@@ -29,13 +29,14 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from core import database as db
-from core.certin import (DISCLAIMER, log_retention_floor, map_to_annexure,
-                         obligations_summary, reporting_deadline)
-from core.sectors import SECTORS, sector_label
-from core.signals import Signal
-
+# Before the core imports: core.window reads SCORING_ANCHOR at import time
 load_dotenv()
+
+from core import database as db  # noqa: E402
+from core.certin import (DISCLAIMER, log_retention_floor, map_to_annexure,  # noqa: E402
+                         obligations_summary, reporting_deadline)
+from core.sectors import SECTORS, sector_label  # noqa: E402
+from core.signals import Signal  # noqa: E402
 
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
     try:
@@ -135,9 +136,16 @@ def cmd_collect(args):
 
         new = sum(1 for s in signals if db.upsert_signal(s))
         total_new += new; total_seen += len(signals)
-        colour = GREEN if signals else DIM
-        print(f"  {colour}ok     {name:<22} {len(signals):>4} signals, "
-              f"{new:>4} new{RESET}")
+        news = getattr(collector, "items", None)
+        if news is not None:
+            fresh = sum(1 for item in news if db.upsert_intel_item(item))
+            colour = GREEN if news else DIM
+            print(f"  {colour}ok     {name:<22} {len(news):>4} stories, "
+                  f"{fresh:>4} new{RESET}")
+        else:
+            colour = GREEN if signals else DIM
+            print(f"  {colour}ok     {name:<22} {len(signals):>4} signals, "
+                  f"{new:>4} new{RESET}")
         for err in collector.errors[:2]:
             print(f"         {YELLOW}{err[:86]}{RESET}")
         db.record_run(name, started, datetime.now(timezone.utc).isoformat(),
@@ -246,6 +254,11 @@ def cmd_bulletin(args):
     scored = rank_sectors_multi(signals)
     by_source = db.signal_counts_by_source(days=args.days)
 
+    from core.window import window_end_date
+    if db.latest_signal_date() > window_end_date().isoformat():
+        print(f"\n{YELLOW}Note: the database has signals newer than the scoring window end "
+              f"({window_end_date():%d %b %Y}). Set SCORING_ANCHOR=now in .env to include them.{RESET}")
+
     ist = timezone(timedelta(hours=5, minutes=30))
     now_ist = datetime.now(ist)
     today = now_ist.date()
@@ -278,126 +291,23 @@ def cmd_bulletin(args):
     ioc_path = outdir / ioc_filename
     _, file_hash = export_iocs_csv(signals, str(ioc_path), public_mode=public_mode)
 
-    # Generate standalone 1-Page Executive Threat Pulse (reads from Public data object)
-    from core.pulse import build_threat_pulse
-    pulse_filename = f"India_Threat_Pulse_{stamp}.pdf"
-    pulse_path = outdir / pulse_filename
-    pulse_window = min(args.days, 7) if args.days <= 14 else 7
-    pulse_signals = _load_signals(pulse_window)
-    pulse_scored = rank_sectors_multi(pulse_signals)
-    pulse_csv_filename = f"IOCs_India_Threat_Landscape_Public_{stamp}.csv"
-    pulse_csv_path = outdir / pulse_csv_filename
-    if not pulse_csv_path.exists():
-        export_iocs_csv(signals, str(pulse_csv_path), public_mode=True)
-    build_threat_pulse(
-        output_path=str(pulse_path), signals=pulse_signals, scored_sectors=pulse_scored,
-        window_days=pulse_window, prepared_by=prep_by, public_csv_path=str(pulse_csv_path)
-    )
-
     # Strict automated QA Gate enforcement
     try:
         run_qa_audit(
             signals=signals, scored_sectors=scored, correlation=correlation,
             pdf_path=str(path), ioc_csv_path=str(ioc_path),
-            window_days=args.days, public_mode=public_mode,
-            pulse_path=str(pulse_path)
+            window_days=args.days, public_mode=public_mode
         )
     except AssertionError as err:
         print(f"\n{RED}QA AUDIT GATE FAILED:{RESET} {err}\n")
         sys.exit(1)
 
-    import hashlib
-    import shutil
-    with open(path, "rb") as f:
-        pdf_hash = hashlib.sha256(f.read()).hexdigest()
-    with open(pulse_path, "rb") as f:
-        pulse_hash = hashlib.sha256(f.read()).hexdigest()
-
-    # Ensure visual assets are bundled into the publication release directory
-    for asset_name in ("india_threat_dashboard.png", "india_threat_dashboard.jpg", "official_india_threat_map.png"):
-        src_asset = Path("data/assets") / asset_name
-        if not src_asset.exists():
-            src_asset = Path("output") / asset_name
-        dst_asset = outdir / asset_name
-        if src_asset.exists() and src_asset.resolve() != dst_asset.resolve():
-            shutil.copy2(src_asset, dst_asset)
-
-    # Generate formal publication release manifest in the output directory
-    manifest_path = outdir / "PUBLICATION_MANIFEST.md"
-    classification_str = "TLP:CLEAR (Public Edition)" if public_mode else "Internal Analyst Edition"
-
-    def _get_sha256(p: Path) -> str:
-        if not p.exists():
-            return "N/A"
-        with open(p, "rb") as f:
-            return hashlib.sha256(f.read()).hexdigest()
-
-    std_pdf = outdir / f"India_Threat_Bulletin_{stamp}.pdf"
-    pub_pdf = outdir / f"India_Threat_Bulletin_Public_{stamp}.pdf"
-
-    table_rows = []
-    if std_pdf.exists():
-        table_rows.append(f"| **Standard Intelligence Bulletin** | `{std_pdf.name}` | {std_pdf.stat().st_size:,} bytes | `{_get_sha256(std_pdf)}` |")
-    if pub_pdf.exists():
-        table_rows.append(f"| **Public Intelligence Bulletin** | `{pub_pdf.name}` | {pub_pdf.stat().st_size:,} bytes | `{_get_sha256(pub_pdf)}` |")
-    if pulse_path.exists():
-        table_rows.append(f"| **1-Page Executive Threat Pulse** | `{pulse_path.name}` | {pulse_path.stat().st_size:,} bytes | `{_get_sha256(pulse_path)}` |")
-    if ioc_path.exists():
-        table_rows.append(f"| **Actionable IOC Indicators (CSV)** | `{ioc_path.name}` | {ioc_path.stat().st_size:,} bytes | `{file_hash}` |")
-    table_rows.append("| **Executive Visual Dashboard** | `india_threat_dashboard.png` | Visual Asset | Graphic Overview |")
-    table_rows.append("| **Official India Threat Map** | `official_india_threat_map.png` | Visual Asset | Regional Geography |")
-
-    table_body = "\n".join(table_rows)
-    ps_commands = "\n".join(
-        f'Get-FileHash -Algorithm SHA256 "{p.name}"'
-        for p in [std_pdf, pub_pdf, pulse_path, ioc_path] if p.exists()
-    )
-
-    manifest_content = f"""# India Threat Landscape — Publication Release Package
-
-**Generated On:** {datetime.now(ist).strftime("%Y-%m-%d %H:%M:%S IST")}  
-**Reporting Window:** {args.days} Days  
-**Prepared By:** {prep_by}  
-**Classification:** {classification_str}  
-
----
-
-## Deliverables in This Package
-
-| Artifact | File Name | Size | SHA-256 Checksum |
-| :--- | :--- | :--- | :--- |
-{table_body}
-
----
-
-## Telemetry & Assessment Summary
-
-- **Total Telemetry Signals:** {len(signals)}
-- **Multi-Source Ingestion Feeds:** {len({s.source for s in signals})}
-- **Monitored Industry Sectors:** {len(scored)}
-- **Page Layout:** Strictly 11 Pages (Bulletin) + Strictly 1 Page (Pulse)
-- **QA Gate Verification:** 100% Passed & Reconciled
-
----
-
-## Cryptographic Integrity Verification
-
-To verify the cryptographic integrity of these files on Windows PowerShell:
-```powershell
-{ps_commands}
-```
-"""
-    manifest_path.write_text(manifest_content, encoding="utf-8")
-
     print(f"\n{BOLD}{GREEN}{'=' * 68}{RESET}")
-    print(f"{BOLD}{GREEN}  PUBLICATION RELEASE PACKAGE GENERATED & QA-VERIFIED{RESET}")
+    print(f"{BOLD}{GREEN}  BULLETIN GENERATED & QA-VERIFIED{RESET}")
     print(f"{BOLD}{GREEN}{'=' * 68}{RESET}")
-    print(f"  {CYAN}Package Directory:{RESET}  {outdir.resolve()}")
-    print(f"  {CYAN}Bulletin PDF:{RESET}       {path.name} (Strictly 11 pages)")
-    print(f"  {CYAN}Pulse Brief:{RESET}        {pulse_path.name} (Strictly 1 page)")
-    print(f"  {CYAN}Companion CSV:{RESET}      {ioc_path.name} (SHA-256: {file_hash[:16]}...)")
-    print(f"  {CYAN}Visual Dashboard:{RESET}   india_threat_dashboard.png")
-    print(f"  {CYAN}Release Manifest:{RESET}   PUBLICATION_MANIFEST.md")
+    print(f"  {CYAN}Folder:{RESET}        {outdir.resolve()}")
+    print(f"  {CYAN}Bulletin PDF:{RESET}  {path.name}")
+    print(f"  {CYAN}IOC sheet:{RESET}     {ioc_path.name} (SHA-256: {file_hash[:16]}...)")
     print(f"  {DIM}{len(signals)} signals | {len({s.source for s in signals})} sources | {len(scored)} sectors | Window: {args.days} days{RESET}")
     print(f"{BOLD}{GREEN}{'=' * 68}{RESET}\n")
 

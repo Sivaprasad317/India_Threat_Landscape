@@ -31,11 +31,11 @@ from typing import Dict, List, Optional
 
 from .sectors import SECTORS, clean_victim_name, is_nciipc_critical, sector_label
 from .signals import Signal, SignalType
+from .window import ANCHOR_DT
 
 SCORING_VERSION = "2.5"
 
-IST = timezone(timedelta(hours=5, minutes=30))
-DEFAULT_ANCHOR_DT = datetime(2026, 10, 11, 23, 59, 59, tzinfo=IST)
+DEFAULT_ANCHOR_DT = ANCHOR_DT
 
 COMPONENT_WEIGHTS = {
     "impact": 0.30,

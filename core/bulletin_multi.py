@@ -19,6 +19,7 @@ text layer.
 
 import os
 import re
+import sqlite3
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -29,6 +30,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
+from reportlab.platypus.tableofcontents import TableOfContents
 from reportlab.platypus import (KeepTogether, PageBreak, Paragraph,
                                 SimpleDocTemplate, Spacer, Table, TableStyle)
 from reportlab.graphics.shapes import (Circle, Drawing, Group, Image as DImage,
@@ -37,12 +39,15 @@ from reportlab.graphics.charts.piecharts import Pie
 
 from .certin import (ANNEXURE_I, DIRECTION_REF, DIRECTION_URL, DISCLAIMER,
                      REPORTING_EMAIL, REPORTING_PHONE, obligations_summary)
+from .database import get_intel_items
 from .geo_india import classify_state, render_official_india_map, STATE_GEO_COORDS
+from .headlines import format_date, headline_keywords, load_headline_threats, news_watch
 from .iocs import export_iocs_csv, get_ioc_summary
-from .scoring_multi import SCORING_VERSION, assign_risk_band
-from .sectors import (clean_victim_name as _clean_victim_name, sector_label,
-                      short_sector_label)
+from .scoring_multi import DEFAULT_ANCHOR_DT, SCORING_VERSION, assign_risk_band
+from .sectors import (SECTORS, clean_victim_name as _clean_victim_name,
+                      sector_label, short_sector_label)
 from .signals import Signal, SignalType
+from .window import window_end_date
 
 BAND_COLORS = {
     "Critical": (colors.HexColor("#501313"), colors.HexColor("#F7C1C1")),
@@ -59,6 +64,19 @@ BAND_HEX_COLORS = {
     "Low": colors.HexColor("#27AE60"),
     "Minimal": colors.HexColor("#2ECC71"),
 }
+
+# Report palette
+NAVY = colors.HexColor("#12263F")
+NAVY_SOFT = colors.HexColor("#1E3A5F")
+ACCENT = colors.HexColor("#E07A1F")
+INK = colors.HexColor("#1F2933")
+MUTED = colors.HexColor("#5B6573")
+RULE = colors.HexColor("#D9DEE5")
+HEAD_BG = colors.HexColor("#EEF2F7")
+PANEL_BG = colors.HexColor("#F6F8FB")
+
+SEVERITY_HEX = {"Critical": "#9B1C1C", "High": "#C2410C",
+                "Medium": "#B7791F", "Low": "#2F855A"}
 
 TYPE_LABEL = {
     SignalType.VICTIM: "Named victim",
@@ -211,20 +229,49 @@ def _styles() -> Dict[str, ParagraphStyle]:
                                     leading=10, alignment=TA_CENTER,
                                     textColor=colors.HexColor("#196F3D")),
         "h2": ParagraphStyle("H2", parent=base["Normal"],
-                             fontName="Helvetica-Bold", fontSize=11,
-                             leading=14, spaceBefore=6, spaceAfter=3,
-                             textColor=colors.HexColor("#1A1A1A")),
+                             fontName="Helvetica-Bold", fontSize=12.5,
+                             leading=15, spaceBefore=6, spaceAfter=3,
+                             textColor=NAVY),
         "h3": ParagraphStyle("H3", parent=base["Normal"],
-                             fontName="Helvetica-Bold", fontSize=9,
-                             leading=12, spaceBefore=4, spaceAfter=2,
-                             textColor=colors.HexColor("#222222")),
+                             fontName="Helvetica-Bold", fontSize=9.2,
+                             leading=12, spaceBefore=5, spaceAfter=2.5,
+                             textColor=NAVY_SOFT),
         "body": ParagraphStyle("B", parent=base["Normal"],
                                fontName="Helvetica", fontSize=8,
-                               leading=11, textColor=colors.HexColor("#2A2A2A")),
+                               leading=11, textColor=INK),
         "body_justify": ParagraphStyle("BJ", parent=base["Normal"],
                                        fontName="Helvetica", fontSize=7.8,
                                        leading=10.8, alignment=TA_JUSTIFY,
-                                       textColor=colors.HexColor("#2A2A2A")),
+                                       textColor=INK),
+        "sec_num": ParagraphStyle("SN", parent=base["Normal"],
+                                  fontName="Helvetica-Bold", fontSize=10.5,
+                                  leading=13, alignment=TA_CENTER,
+                                  textColor=colors.white),
+        "sec_title": ParagraphStyle("ST", parent=base["Normal"],
+                                    fontName="Helvetica-Bold", fontSize=12.5,
+                                    leading=15, textColor=NAVY),
+        "card_title": ParagraphStyle("CT", parent=base["Normal"],
+                                     fontName="Helvetica-Bold", fontSize=10.5,
+                                     leading=13, textColor=NAVY),
+        "card_meta": ParagraphStyle("CM", parent=base["Normal"],
+                                    fontName="Helvetica", fontSize=7.2,
+                                    leading=9.8, textColor=MUTED),
+        "card_label": ParagraphStyle("CL", parent=base["Normal"],
+                                     fontName="Helvetica-Bold", fontSize=6.8,
+                                     leading=9, spaceAfter=1,
+                                     textColor=ACCENT),
+        "card_body": ParagraphStyle("CBD", parent=base["Normal"],
+                                    fontName="Helvetica", fontSize=7.9,
+                                    leading=11, textColor=INK),
+        "card_bullet": ParagraphStyle("CBL", parent=base["Normal"],
+                                      fontName="Helvetica", fontSize=7.7,
+                                      leading=10.4, leftIndent=8,
+                                      bulletIndent=0, spaceAfter=1.5,
+                                      textColor=INK),
+        "bluf": ParagraphStyle("BL", parent=base["Normal"],
+                               fontName="Helvetica", fontSize=8.3,
+                               leading=11.6, leftIndent=9, bulletIndent=0,
+                               spaceAfter=2.5, textColor=INK),
         "small": ParagraphStyle("SM", parent=base["Normal"],
                                 fontName="Helvetica", fontSize=7.2, leading=9.8,
                                 textColor=colors.HexColor("#555555")),
@@ -284,19 +331,21 @@ def _table(rows, widths, st, header=True, zebra=False, padding=(2.0, 2.0, 3.0, 3
     top_p, bot_p, left_p, right_p = padding
     style = [
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#CCCCCC")),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.4, RULE),
+        ("LINEABOVE", (0, 0), (-1, 0), 0.4, RULE),
         ("TOPPADDING", (0, 0), (-1, -1), top_p),
         ("BOTTOMPADDING", (0, 0), (-1, -1), bot_p),
         ("LEFTPADDING", (0, 0), (-1, -1), left_p),
         ("RIGHTPADDING", (0, 0), (-1, -1), right_p),
     ]
     if header:
-        style.append(("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EFEDE6")))
+        style.append(("BACKGROUND", (0, 0), (-1, 0), HEAD_BG))
+        style.append(("LINEBELOW", (0, 0), (-1, 0), 0.9, NAVY_SOFT))
     if zebra:
         for i in range(1 if header else 0, len(rows)):
             if i % 2 == 0:
                 style.append(("BACKGROUND", (0, i), (-1, i),
-                              colors.HexColor("#FAF9F5")))
+                              colors.HexColor("#F7F9FB")))
     t.setStyle(TableStyle(style))
     return t
 
@@ -306,16 +355,45 @@ def _kpi_table(rows, widths):
     style = [
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F8F7F4")),
-        ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#D8D6CE")),
-        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E0D8")),
-        ("TOPPADDING", (0, 0), (-1, -1), 3.5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+        ("BACKGROUND", (0, 0), (-1, -1), PANEL_BG),
+        ("LINEABOVE", (0, 0), (-1, 0), 2.2, NAVY),
+        ("LINEAFTER", (0, 0), (-2, -1), 0.8, colors.white),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
         ("LEFTPADDING", (0, 0), (-1, -1), 2),
         ("RIGHTPADDING", (0, 0), (-1, -1), 2),
     ]
     t.setStyle(TableStyle(style))
     return t
+
+
+def _section_header(title: str, number: int, st) -> Table:
+    """Numbered section banner: accent block with the number, navy title, rule."""
+    t = Table([[Paragraph(f"{number:02d}", st["sec_num"]),
+                Paragraph(title, st["sec_title"])]],
+              colWidths=[10 * mm, 168 * mm])
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, 0), ACCENT),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LINEBELOW", (1, 0), (1, 0), 1.0, NAVY),
+        ("LEFTPADDING", (0, 0), (0, 0), 0),
+        ("RIGHTPADDING", (0, 0), (0, 0), 0),
+        ("LEFTPADDING", (1, 0), (1, 0), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 3.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+    ]))
+    t.spaceAfter = 4
+    t.toc_title = f"{number:02d}&nbsp;&nbsp;&nbsp;{title}"
+    return t
+
+
+class _BulletinDoc(SimpleDocTemplate):
+    """Feeds section headers into the cover's table of contents."""
+
+    def afterFlowable(self, flowable):
+        title = getattr(flowable, "toc_title", None)
+        if title:
+            self.notify("TOCEntry", (0, title, self.page))
 
 
 def _band_text(band: str, st) -> Paragraph:
@@ -343,13 +421,12 @@ def create_sector_bar_chart(scored_sectors: List[Dict], width: float = 178 * mm,
 
     # Card background
     d.add(Rect(0, 0, width, chart_height, rx=4, ry=4,
-               fillColor=colors.HexColor("#FAFAFA"),
-               strokeColor=colors.HexColor("#E0DFD5"), strokeWidth=0.7))
+               fillColor=PANEL_BG, strokeColor=RULE, strokeWidth=0.7))
 
     # Header title
     d.add(String(12, chart_height - 17, "Sector Risk Score Comparison",
                  fontName="Helvetica-Bold", fontSize=9.0,
-                 fillColor=colors.HexColor("#1A1A1A")))
+                 fillColor=NAVY))
 
     # Legend badges (Synchronized with core/scoring_multi.py BANDS)
     legend = [
@@ -412,18 +489,19 @@ def create_signal_breakdown_chart(signals: List[Signal], width: float = 178 * mm
     """
     d = Drawing(width, height)
     d.add(Rect(0, 0, width, height, rx=4, ry=4,
-               fillColor=colors.HexColor("#FAFAFA"),
-               strokeColor=colors.HexColor("#E0DFD5"), strokeWidth=0.7))
+               fillColor=PANEL_BG, strokeColor=RULE, strokeWidth=0.7))
 
     d.add(String(12, height - 16, "Intelligence Signals by Category",
                  fontName="Helvetica-Bold", fontSize=9.0,
-                 fillColor=colors.HexColor("#1A1A1A")))
+                 fillColor=NAVY))
 
     by_type = Counter(s.signal_type for s in signals)
     total_signals = len(signals) or 1
+    kev_n = sum(1 for s in signals if s.source == "CISA KEV")
+    nvd_n = sum(1 for s in signals if s.source == "NVD")
 
     categories = [
-        (SignalType.VULNERABILITY, "Vulnerabilities (57 KEV / 68 NVD)", colors.HexColor("#D35400")),
+        (SignalType.VULNERABILITY, f"Vulnerabilities ({kev_n} KEV/{nvd_n} NVD)", colors.HexColor("#D35400")),
         (SignalType.MALWARE_INFRA, "Malware C2 & Infrastructure", colors.HexColor("#E67E22")),
         (SignalType.VICTIM, "Extortion Postings & Victims", colors.HexColor("#C0392B")),
         (SignalType.ADVISORY, "Official CERT-In Advisories", colors.HexColor("#1F618D")),
@@ -467,7 +545,7 @@ def create_signal_breakdown_chart(signals: List[Signal], width: float = 178 * mm
 
     hole_radius = 17
     d.add(Circle(pie_x + pie_size/2, pie_y + pie_size/2, hole_radius,
-                 fillColor=colors.HexColor("#FAFAFA"), strokeColor=None))
+                 fillColor=PANEL_BG, strokeColor=None))
     d.add(String(pie_x + pie_size/2 - 8, pie_y + pie_size/2 - 3,
                  f"{total_signals}", fontName="Helvetica-Bold", fontSize=8.0,
                  fillColor=colors.HexColor("#222222")))
@@ -488,7 +566,7 @@ def create_signal_breakdown_chart(signals: List[Signal], width: float = 178 * mm
         d.add(Rect(cur_x, cur_y + 1, 7.5, 7.5, rx=2, ry=2, fillColor=col, strokeColor=None))
         d.add(String(cur_x + 12, cur_y + 2, f"{label}:", fontName="Helvetica",
                      fontSize=7.0, fillColor=colors.HexColor("#333333")))
-        d.add(String(cur_x + 118, cur_y + 2, f"{count} ({pct:.1f}%)",
+        d.add(String(cur_x + 128, cur_y + 2, f"{count} ({pct:.1f}%)",
                      fontName="Helvetica-Bold", fontSize=7.0, fillColor=col))
 
     return d
@@ -503,12 +581,11 @@ def create_india_threat_map(signals: List[Signal], width: float = 178 * mm,
     d = Drawing(width, height)
 
     d.add(Rect(0, 0, width, height, rx=4, ry=4,
-               fillColor=colors.HexColor("#FAFAFA"),
-               strokeColor=colors.HexColor("#E0DFD5"), strokeWidth=0.7))
+               fillColor=PANEL_BG, strokeColor=RULE, strokeWidth=0.7))
 
     d.add(String(12, height - 16, "Geographic Threat Distribution: Targeted Indian States & UTs",
                  fontName="Helvetica-Bold", fontSize=9.0,
-                 fillColor=colors.HexColor("#1A1A1A")))
+                 fillColor=NAVY))
     d.add(String(width - 150, height - 16, f"Reporting Period: {window_days} Days",
                  fontName="Helvetica", fontSize=6.8,
                  fillColor=colors.HexColor("#666666")))
@@ -695,8 +772,7 @@ def create_threat_actors_bar_chart(signals: List[Signal], width: float = 178 * m
     """
     d = Drawing(width, height)
     d.add(Rect(0, 0, width, height, rx=4, ry=4,
-               fillColor=colors.HexColor("#FAFAFA"),
-               strokeColor=colors.HexColor("#E0DFD5"), strokeWidth=0.7))
+               fillColor=PANEL_BG, strokeColor=RULE, strokeWidth=0.7))
 
     d.add(String(12, height - 15, "Active Ransomware Syndicates Targeting India",
                  fontName="Helvetica-Bold", fontSize=8.5,
@@ -795,8 +871,7 @@ def create_targeted_tech_chart(signals: List[Signal], width: float = 178 * mm,
     """
     d = Drawing(width, height)
     d.add(Rect(0, 0, width, height, rx=4, ry=4,
-               fillColor=colors.HexColor("#FAFAFA"),
-               strokeColor=colors.HexColor("#E0DFD5"), strokeWidth=0.7))
+               fillColor=PANEL_BG, strokeColor=RULE, strokeWidth=0.7))
 
     d.add(String(12, height - 15, "Targeted Enterprise Technology Stacks & Edge Devices",
                  fontName="Helvetica-Bold", fontSize=8.5,
@@ -846,7 +921,7 @@ def compute_weekly_buckets(start_date: Optional[object] = None,
     """
     if not start_date or not end_date:
         start_date = datetime(2026, 8, 12).date()
-        end_date = datetime(2026, 10, 11).date()
+        end_date = window_end_date()
     if not data_end_date:
         data_end_date = datetime(2026, 10, 10).date()
 
@@ -894,8 +969,7 @@ def create_timeline_activity_chart(signals: List[Signal],
     """
     d = Drawing(width, height)
     d.add(Rect(0, 0, width, height, rx=4, ry=4,
-               fillColor=colors.HexColor("#FAFAFA"),
-               strokeColor=colors.HexColor("#E0DFD5"), strokeWidth=0.7))
+               fillColor=PANEL_BG, strokeColor=RULE, strokeWidth=0.7))
 
     d.add(String(12, height - 15, f"Weekly Threat Telemetry Velocity (All {len(signals)} Signals Accounted)",
                  fontName="Helvetica-Bold", fontSize=8.5,
@@ -1093,14 +1167,104 @@ def create_regional_corridor_table(signals: List[Signal], st) -> Table:
                   zebra=True, padding=(1.6, 1.6, 2.5, 2.5))
 
 
+def _headline_card(h: Dict, st) -> Table:
+    """One headline threat as a card: severity strip, what happened, why it
+    matters for India, what to do, references."""
+    sev = h["severity"]
+    sev_hex = SEVERITY_HEX.get(sev, "#5B6573")
+    meta = [f'<font color="{sev_hex}"><b>{sev.upper()}</b></font>',
+            _esc(h["category"]), format_date(h["date"])]
+    sectors = [short_sector_label(x) for x in h.get("sectors", []) if x in SECTORS]
+    if sectors:
+        meta.append("Sectors: " + _esc(", ".join(sectors)))
+
+    inner = [Paragraph(_esc(h["title"]), st["card_title"]),
+             Paragraph("  ·  ".join(meta), st["card_meta"])]
+    if h.get("status"):
+        inner.append(Paragraph(f"<b>Status:</b> {_esc(h['status'])}", st["card_meta"]))
+    inner += [Spacer(1, 4),
+              Paragraph("WHAT HAPPENED", st["card_label"]),
+              Paragraph(_esc(h["summary"]), st["card_body"]),
+              Spacer(1, 5)]
+
+    why = [Paragraph("WHY IT MATTERS FOR INDIA", st["card_label"])]
+    if h.get("india_link"):
+        why.append(Paragraph(f"<i>{_esc(h['india_link'])}</i>", st["card_meta"]))
+        why.append(Spacer(1, 2))
+    if h.get("india_impact"):
+        why.append(Paragraph(_esc(h["india_impact"]), st["card_body"]))
+    todo = [Paragraph("WHAT TO DO NOW", st["card_label"])]
+    todo += [Paragraph(_esc(a), st["card_bullet"], bulletText="\u2022")
+             for a in h["actions"]]
+    cols = Table([[why, todo]], colWidths=[80 * mm, 88 * mm])
+    cols.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (0, 0), 0),
+        ("RIGHTPADDING", (0, 0), (0, 0), 8),
+        ("LEFTPADDING", (1, 0), (1, 0), 8),
+        ("RIGHTPADDING", (1, 0), (1, 0), 0),
+        ("LINEBEFORE", (1, 0), (1, 0), 0.5, RULE),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    inner.append(cols)
+
+    refs = []
+    if h.get("cves"):
+        refs.append("<b>CVEs:</b> " + _esc(", ".join(h["cves"])))
+    if h.get("indicators"):
+        refs.append("<b>Indicators:</b> " + _esc("; ".join(h["indicators"])))
+    links = "; ".join(f'<a href="{_esc(src["url"])}" color="#1E3A5F">{_esc(src["name"])}</a>'
+                      for src in h["sources"])
+    refs.append(f"<b>Sources:</b> {links}")
+    inner.append(Spacer(1, 5))
+    inner += [Paragraph(r, st["card_meta"]) for r in refs]
+
+    card = Table([["", inner]], colWidths=[2.2 * mm, 175.8 * mm])
+    card.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, 0), colors.HexColor(sev_hex)),
+        ("BACKGROUND", (1, 0), (1, 0), PANEL_BG),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (0, 0), 0),
+        ("RIGHTPADDING", (0, 0), (0, 0), 0),
+        ("LEFTPADDING", (1, 0), (1, 0), 8),
+        ("RIGHTPADDING", (1, 0), (1, 0), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+    ]))
+    return card
+
+
+def _news_watch_table(items: List[Dict], st) -> Table:
+    from .collectors.news import classify_news
+    rows = [[Paragraph("<b>Date</b>", st["cellb"]),
+             Paragraph("<b>Headline</b>", st["cellb"]),
+             Paragraph("<b>Source</b>", st["cellb"]),
+             Paragraph("<b>Type</b>", st["cellb"])]]
+    for item in items:
+        tags = classify_news(item["title"], item.get("summary", ""))
+        kind = tags["category"] + (" · India" if item.get("india_relevant") else "")
+        rows.append([
+            Paragraph(format_date(item.get("published_at", "")), st["cell"]),
+            Paragraph(f'<a href="{_esc(item["url"])}" color="#1E3A5F">{_esc(item["title"])}</a>',
+                      st["cell"]),
+            Paragraph(_esc(item.get("source", "")), st["cell"]),
+            Paragraph(_esc(kind), st["cell"]),
+        ])
+    return _table(rows, [20 * mm, 110 * mm, 26 * mm, 22 * mm], st, zebra=True,
+                  padding=(2.2, 2.2, 3, 3))
+
+
 # ---------------------------------------------------------------------------
 # Numbered Canvas for Dynamic Page Counts & Running Headers
 # ---------------------------------------------------------------------------
 
 class NumberedCanvas(canvas.Canvas):
-    """Two-pass canvas to dynamically compute and draw total page count and running header."""
+    """Two-pass canvas: cover band on page 1, running header and footer after."""
     author_name = "Siva prasad Boddu"
     public_mode = False
+    edition_date = ""
+    COVER_BAND_H = 50 * mm
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1118,30 +1282,70 @@ class NumberedCanvas(canvas.Canvas):
             super().showPage()
         super().save()
 
+    def _edition_label(self) -> str:
+        return "TLP:CLEAR" if getattr(self, "public_mode", False) else "INTERNAL EDITION"
+
+    def draw_cover_band(self):
+        page_w, page_h = A4
+        band_h = self.COVER_BAND_H
+        x = 16 * mm
+        self.setFillColor(NAVY)
+        self.rect(0, page_h - band_h, page_w, band_h, stroke=0, fill=1)
+        self.setFillColor(ACCENT)
+        self.rect(0, page_h - band_h, page_w, 1.6 * mm, stroke=0, fill=1)
+
+        self.setFont("Helvetica-Bold", 7.5)
+        self.setFillColor(colors.HexColor("#F6AD55"))
+        self.drawString(x, page_h - 14 * mm, "CYBER THREAT INTELLIGENCE  ·  INDIA")
+        self.setFont("Helvetica-Bold", 23)
+        self.setFillColor(colors.white)
+        self.drawString(x, page_h - 25 * mm, "India Threat Landscape Bulletin")
+        self.setFont("Helvetica", 9.5)
+        self.setFillColor(colors.HexColor("#CBD5E1"))
+        self.drawString(x, page_h - 32 * mm,
+                        "Multi-source threat intelligence for Indian organisations")
+        self.setFont("Helvetica", 8)
+        self.drawString(x, page_h - 40 * mm,
+                        f"Edition {self.edition_date}   ·   Prepared by {self.author_name}")
+
+        label = self._edition_label()
+        badge_w, badge_h = 34 * mm, 8 * mm
+        bx, by = page_w - 16 * mm - badge_w, page_h - 27 * mm
+        badge_col = "#2F855A" if getattr(self, "public_mode", False) else "#B45309"
+        self.setFillColor(colors.HexColor(badge_col))
+        self.roundRect(bx, by, badge_w, badge_h, 2 * mm, stroke=0, fill=1)
+        self.setFillColor(colors.white)
+        self.setFont("Helvetica-Bold", 8.5)
+        self.drawCentredString(bx + badge_w / 2, by + 2.8 * mm, label)
+
     def draw_page_decorations(self, page_count):
         self.saveState()
-        page_w = 210 * mm
+        page_w, page_h = A4
         margin_l = 16 * mm
         margin_r = page_w - 16 * mm
 
-        # Running Top Header on every page (Public Edition only)
-        if getattr(self, "public_mode", False):
+        if self._pageNumber == 1:
+            self.draw_cover_band()
+        else:
+            # Running header: thin navy strip, title left, edition right
+            self.setFillColor(NAVY)
+            self.rect(0, page_h - 3 * mm, page_w, 3 * mm, stroke=0, fill=1)
             self.setFont("Helvetica-Bold", 7.0)
-            self.setFillColor(colors.HexColor("#718096"))
-            self.drawString(margin_l, 289 * mm, "TLP:CLEAR")
-            self.drawRightString(margin_r, 289 * mm, "INDIA THREAT LANDSCAPE BULLETIN")
-
-            # Top divider rule
-            self.setStrokeColor(colors.HexColor("#CBD5E1"))
+            self.drawString(margin_l, 289 * mm, "INDIA THREAT LANDSCAPE BULLETIN")
+            self.setFillColor(MUTED)
+            self.setFont("Helvetica", 7.0)
+            self.drawRightString(margin_r, 289 * mm,
+                                 f"{self._edition_label()}   ·   {self.edition_date}")
+            self.setStrokeColor(RULE)
             self.setLineWidth(0.5)
             self.line(margin_l, 286.5 * mm, margin_r, 286.5 * mm)
 
-        # Bottom divider rule
+        # Footer
+        self.setStrokeColor(RULE)
+        self.setLineWidth(0.5)
         self.line(margin_l, 11 * mm, margin_r, 11 * mm)
-
-        # Running Bottom Footer on every page
         self.setFont("Helvetica", 6.0)
-        self.setFillColor(colors.HexColor("#718096"))
+        self.setFillColor(MUTED)
         author = getattr(self, "author_name", "Siva prasad Boddu")
         disclaimer = "Independent analyst work · Not affiliated with CERT-In"
         if getattr(self, "public_mode", False):
@@ -1149,8 +1353,8 @@ class NumberedCanvas(canvas.Canvas):
         else:
             self.drawString(margin_l, 7.5 * mm, f"Prepared by: {author}   |   {disclaimer}")
 
-        self.setFont("Helvetica", 7.0)
-        self.setFillColor(colors.HexColor("#4A5568"))
+        self.setFont("Helvetica-Bold", 7.0)
+        self.setFillColor(NAVY)
         self.drawRightString(margin_r, 7.5 * mm, f"Page {self._pageNumber} of {page_count}")
 
         self.restoreState()
@@ -1218,7 +1422,7 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     now_ist = now.astimezone(ist)
 
     # Master reporting window variables (derived from end_date and window_days)
-    end_date = datetime(2026, 10, 11).date()
+    end_date = window_end_date()
     start_date = end_date - timedelta(days=window_days)
     period_start = start_date.strftime("%d %b %Y")
     period_end = end_date.strftime("%d %b %Y")
@@ -1253,8 +1457,9 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         author_name = "Siva prasad Boddu"
     NumberedCanvas.author_name = author_name
     NumberedCanvas.public_mode = public_mode
+    NumberedCanvas.edition_date = now_ist.strftime("%d %b %Y")
 
-    doc = SimpleDocTemplate(
+    doc = _BulletinDoc(
         output_path, pagesize=A4,
         leftMargin=16 * mm, rightMargin=16 * mm,
         topMargin=13 * mm, bottomMargin=13 * mm,
@@ -1277,17 +1482,25 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     crit_labels = ", ".join([short_sector_label(s["sector"]) for s in scored_sectors if s["risk_band"] in ("Critical", "High")][:3]) or "IT Services, Manufacturing, BFSI"
 
     # =========================================================================
-    # PAGE 1: Executive Dashboard & Threat Overview
+    # COVER: headline numbers, bottom line, sector picture
     # =========================================================================
-    story.append(Paragraph("India Threat Landscape Bulletin", st["title"]))
+    gen_date = now_ist.date()
+    headlines = load_headline_threats(start=start_date, end=max(gen_date, end_date))
+    try:
+        recent_news = get_intel_items((now - timedelta(days=14)).isoformat(), now.isoformat())
+    except sqlite3.Error:
+        recent_news = []
+    news_items = news_watch(recent_news, headline_keywords(headlines))
+    sec_no = 0
+
+    story.append(Spacer(1, NumberedCanvas.COVER_BAND_H - 13 * mm))
     meta = [
-        f"Prepared by: {author_name}",
         f"Reporting period: {window_str}",
         provenance_info["currency_note"],
         f"Generated: {now_ist.strftime('%d %b %Y %H:%M IST')}"
     ]
     story.append(Paragraph(" | ".join(_esc(m) for m in meta), st["sub"]))
-    story.append(Spacer(1, 5))
+    story.append(Spacer(1, 6))
 
     seen_multiple_count = correlation.get("corroborated_count", 10)
     seen_artefacts_count = correlation.get("shared_artefacts_count", 6)
@@ -1295,58 +1508,117 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     kpi_org_str = f"{unique_orgs} Org" if unique_orgs == 1 else f"{unique_orgs} Orgs"
     all_cves_count = len({c for s in signals if s.entities and s.entities.cves for c in s.entities.cves})
 
+    kpi_label = ParagraphStyle("KL", parent=st["kpi"], fontName="Helvetica-Bold",
+                               fontSize=6.3, leading=8, textColor=MUTED)
+    kpi_num = ParagraphStyle("KN", parent=st["kpi"], fontName="Helvetica-Bold",
+                             fontSize=16, leading=19)
+    kpi_note = ParagraphStyle("KT", parent=st["kpi"], fontSize=5.8, leading=7.2,
+                              textColor=MUTED)
+
+    def _kpi(label, value, colour, note=""):
+        cell = [Paragraph(label.upper(), kpi_label),
+                Paragraph(f"<font color='{colour}'>{value}</font>", kpi_num)]
+        if note:
+            cell.append(Paragraph(_esc(note), kpi_note))
+        return cell
+
     kpi_cards = [[
-        Paragraph(f"<b>Signals</b><br/><font color='#111111' size='11.5'><b>{len(signals)}</b></font>", st["kpi"]),
-        Paragraph(f"<b>Sources</b><br/><font color='#1F618D' size='11.5'><b>{len(sources)}</b></font>", st["kpi"]),
-        Paragraph(f"<b>Extortion Postings</b><br/><font color='#C0392B' size='11.5'><b>{total_postings}</b></font><br/><font size='5.5' color='#666'>({kpi_org_str})</font>", st["kpi"]),
-        Paragraph(f"<b>Actively Exploited (KEV)</b><br/><font color='#D35400' size='11.5'><b>{cisa_kev_count}</b></font><br/><font size='5.5' color='#666'>({all_cves_count} Distinct CVEs Monitored)</font>", st["kpi"]),
-        Paragraph(f"<b>Seen in multiple feeds</b><br/><font color='#27AE60' size='11.5'><b>{seen_multiple_count}</b></font><br/><font size='5.5' color='#666'>({seen_artefacts_count} Artefacts)</font>", st["kpi"]),
-        Paragraph(f"<b>High+ Sectors</b><br/><font color='#791F1F' size='11.5'><b>{critical_sectors}</b></font><br/><font size='5.5' color='#666'>({crit_labels})</font>", st["kpi"]),
+        _kpi("Signals", len(signals), "#12263F"),
+        _kpi("Sources", len(sources), "#1E3A5F"),
+        _kpi("Extortion Postings", total_postings, "#9B1C1C", f"({kpi_org_str})"),
+        _kpi("Actively Exploited (KEV)", cisa_kev_count, "#C2410C", f"({all_cves_count} Distinct CVEs Monitored)"),
+        _kpi("Seen in multiple feeds", seen_multiple_count, "#2F855A", f"({seen_artefacts_count} Artefacts)"),
+        _kpi("High+ Sectors", critical_sectors, "#9B1C1C", f"({crit_labels})"),
     ]]
     story.append(_kpi_table(kpi_cards, [29.6 * mm] * 6))
-    story.append(Spacer(1, 4))
+    story.append(Spacer(1, 8))
 
-    v_word = "victim" if unique_orgs == 1 else "victims"
-    post_word = "disclosure" if total_postings == 1 else "disclosures"
-    ioc_feed_text = "abuse.ch ThreatFox and URLhaus"
-    story.append(Paragraph(
-        f"Telemetry collected across {len(sources)} multi-source threat feeds. "
-        f"A total of {total_postings} extortion {post_word} represent{'s' if total_postings == 1 else ''} {unique_orgs} unique Indian corporate {v_word}. "
-        f"{len(infra_signals)} infrastructure signals yielded {ioc_summary['total_indicators']} actionable domestic IOC indicators "
-        f"({ioc_summary['unique_hosts']} unique hosts across {ioc_feed_text}). "
-        f"{seen_multiple_count} signals were listed on multiple feeds ({seen_artefacts_count} shared artefacts; note: ransomware.live and ransomlook.io share upstream scraper sources).",
-        st["small"]))
-    story.append(Spacer(1, 4))
+    # Bottom line up front
+    actor_orgs_cover = defaultdict(set)
+    for v in victim_attributions:
+        for a in v["actor"].split(", "):
+            if a and a != "Unattributed":
+                actor_orgs_cover[a].add(v["victim"])
+    lead_actors = [a for a, _ in sorted(actor_orgs_cover.items(), key=lambda x: (-len(x[1]), x[0]))[:4]]
 
-    purpose_box = Table([[
-        Paragraph(
-            "<b>Purpose, Target Audience &amp; Analytical Boundaries</b><br/>"
-            "<b>Purpose:</b> Strategic threat landscape intelligence synthesizing empirical multi-source telemetry to guide defensive resource allocation, patch prioritization, and incident preparedness across the Indian operating theater.<br/>"
-            "<b>Target Audience:</b> CISOs, Security Directors, SOC Lead Analysts, Risk Officers, and Enterprise IT Administrators responsible for Indian enterprise networks and Section 70A Critical Information Infrastructure (CII).<br/>"
-            "<b>Analytical Limits:</b> Telemetry reflects externally observable perimeter exposure, public extortion disclosures, and actionable malware infrastructure. It cannot prove the absence of undetected intrusions, verify forensic root-cause access vectors for individual private victims, or account for extortion incidents resolved privately without public disclosure.",
-            st["callout"])
-    ]], colWidths=[178 * mm])
-    purpose_box.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F8F9FA")),
-        ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#CBD5E1")),
-        ("TOPPADDING", (0, 0), (-1, -1), 2.5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
-        ("LEFTPADDING", (0, 0), (-1, -1), 5),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+    bluf = []
+    if headlines:
+        named = "; ".join(
+            f"{_esc(h['title'].split(':')[0])} "
+            f"(<font color='{SEVERITY_HEX[h['severity']]}'><b>{h['severity']}</b></font>)"
+            for h in headlines[:4])
+        n_h = len(headlines)
+        bluf.append(f"<b>{n_h} headline incident{'s' if n_h != 1 else ''} need{'s' if n_h == 1 else ''} "
+                    f"action now:</b> {named}. Details and checklists in section 01.")
+    if scored_sectors:
+        top = scored_sectors[0]
+        bluf.append(f"<b>{_esc(top['label'])}</b> carries the highest composite risk score "
+                    f"({top['risk_score']:.1f}, {top['risk_band']}). "
+                    f"{critical_sectors} sector{'s rate' if critical_sectors != 1 else ' rates'} High or above.")
+    if unique_orgs:
+        org_word = "organisation was" if unique_orgs == 1 else "organisations were"
+        post_word = "posting" if total_postings == 1 else "postings"
+        actors_txt = f" Most active groups: {_esc(', '.join(lead_actors))}." if lead_actors else ""
+        bluf.append(f"<b>{unique_orgs} Indian {org_word}</b> named on ransomware leak sites "
+                    f"across {total_postings} {post_word}.{actors_txt}")
+    bluf.append(f"<b>{cisa_kev_count} actively exploited vulnerabilities</b> (CISA KEV) map to technology "
+                f"used in Indian enterprises, and {len(infra_signals)} malware and phishing infrastructure "
+                f"signals yielded {total_iocs} indicators for alerting (see the companion IOC sheet).")
+
+    bluf_box = Table([[[Paragraph("Bottom line", st["h3"])] +
+                       [Paragraph(b, st["bluf"], bulletText="\u25A0") for b in bluf]]],
+                     colWidths=[178 * mm])
+    bluf_box.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), PANEL_BG),
+        ("LINEBEFORE", (0, 0), (0, -1), 3, ACCENT),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 9),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 9),
     ]))
-    story.append(purpose_box)
-    story.append(Spacer(1, 4))
-
-    story.append(create_signal_breakdown_chart(signals))
-    story.append(Spacer(1, 5))
+    story.append(bluf_box)
+    story.append(Spacer(1, 8))
 
     story.append(create_sector_bar_chart(scored_sectors))
+    story.append(Spacer(1, 8))
+
+    toc = TableOfContents()
+    toc.levelStyles = [ParagraphStyle("TOC0", fontName="Helvetica", fontSize=8.2,
+                                      leading=11.8, textColor=INK)]
+    toc.dotsMinLevel = 0
+    story.append(Paragraph("In this report", st["h3"]))
+    story.append(toc)
+
+    # =========================================================================
+    # THREATS IN FOCUS: analyst-written headline incidents + news watch
+    # =========================================================================
+    if headlines or news_items:
+        story.append(PageBreak())
+        sec_no += 1
+        story.append(_section_header("Threats in Focus: Incidents Driving Current Risk", sec_no, st))
+        story.append(Paragraph(
+            f"Notable incidents reported up to {gen_date.strftime('%d %b %Y')}, summarised by the analyst "
+            f"from the sources on each card. They extend past the telemetry window ending "
+            f"{end_date.strftime('%d %b %Y')} and do not change the sector scores in this report.",
+            st["small"]))
+        story.append(Spacer(1, 6))
+        for h in headlines:
+            story.append(KeepTogether([_headline_card(h, st), Spacer(1, 7)]))
+        if news_items:
+            story.append(KeepTogether([
+                Paragraph("Also in the News (last 14 days)", st["h3"]),
+                Paragraph("Security-news stories naming India or describing high-impact events, "
+                          "collected automatically and not yet analysed.", st["small"]),
+                Spacer(1, 3),
+                _news_watch_table(news_items, st),
+            ]))
 
     # =========================================================================
     # PAGE 2: Executive Summary & Strategic Outlook
     # =========================================================================
     story.append(PageBreak())
-    story.append(Paragraph("Executive Summary: Threat Judgements & Strategic Outlook", st["h2"]))
+    sec_no += 1
+    story.append(_section_header("Executive Summary: Threat Judgements & Strategic Outlook", sec_no, st))
 
     if public_mode:
         tlp_table = Table([[
@@ -1510,11 +1782,24 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     story.append(Spacer(1, 2.5))
     story.append(Paragraph("<b>7-Day Tactical Action Matrix for Security Operations & IT Leadership</b>", st["h3"]))
 
+    priority_for = {"Critical": ("#C0392B", "P1: Critical"), "High": ("#D35400", "P2: High"),
+                    "Medium": ("#27AE60", "P3: Medium"), "Low": ("#27AE60", "P3: Medium")}
+    headline_rows = []
+    for h in headlines:
+        colour, label = priority_for[h["severity"]]
+        headline_rows.append([
+            Paragraph(f"<font color='{colour}'><b>{label}</b></font>", st["cell"]),
+            Paragraph(f"<b>{_esc(h['title'].split(':')[0])}:</b> {_esc(h['actions'][0])}", st["cell"]),
+            Paragraph(_esc(h.get("scope") or h["category"]), st["cell"]),
+            Paragraph(_esc(h.get("owner") or "SecOps"), st["cell"]),
+        ])
+
     matrix_rows = [
         [Paragraph("<b>Priority</b>", st["cellb"]),
          Paragraph("<b>Recommended Action</b>", st["cellb"]),
          Paragraph("<b>Target Scope</b>", st["cellb"]),
          Paragraph("<b>Primary Stakeholder</b>", st["cellb"])],
+        *headline_rows,
         [Paragraph("<font color='#C0392B'><b>P1: Critical</b></font>", st["cell"]),
          Paragraph("Patch Internet-facing edge appliances (Citrix NetScaler CVE-2026-88779, CVE-2026-88771, CVE-2026-8452; Cisco CVE-2026-76504, CVE-2026-76460, CVE-2026-76461; SonicWall SMA CVE-2026-83548, CVE-2026-83549; MikroTik RouterOS CVE-2026-67279). Recommended target date: 17 Oct 2026.", st["cell"]),
          Paragraph("External Perimeter", st["cell"]),
@@ -1536,13 +1821,17 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
          Paragraph("Internet Assets", st["cell"]),
          Paragraph("SecOps / Red Team", st["cell"])],
     ]
+    # Highest priority first; headline actions lead within each tier
+    matrix_rows[1:] = sorted(matrix_rows[1:],
+                             key=lambda row: re.search(r"P(\d)", row[0].text).group(1))
     story.append(_table(matrix_rows, [22 * mm, 88 * mm, 38 * mm, 30 * mm], st, zebra=True, padding=(1.6, 1.6, 2.5, 2.5)))
 
     # =========================================================================
     # PAGE 3: Geographic Telemetry & Subcontinent Hotspots
     # =========================================================================
     story.append(PageBreak())
-    story.append(Paragraph("India Threat Telemetry & Regional Hotspots", st["h2"]))
+    sec_no += 1
+    story.append(_section_header("India Threat Telemetry & Regional Hotspots", sec_no, st))
     story.append(Paragraph(
         "Geographic distribution of extortion postings (leak-site claims) across Indian industrial corridors and metropolitan centers. "
         "High-density adversary concentration is observed across Delhi NCR headquarters, Gujarat manufacturing hubs, and Maharashtra commercial clusters.",
@@ -1571,7 +1860,8 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     # PAGE 4: Adversary Syndicates & Technology Infrastructure
     # =========================================================================
     story.append(PageBreak())
-    story.append(Paragraph("Adversary Landscape & Targeted Technology Infrastructure", st["h2"]))
+    sec_no += 1
+    story.append(_section_header("Adversary Landscape & Targeted Technology Infrastructure", sec_no, st))
     story.append(Paragraph(
         "Active extortion syndicates and threat groups observed targeting Indian organisations, paired with enterprise technology stacks "
         "under active exploitation. Edge gateways and remote collaboration suites remain focal access vectors for initial access brokers (IABs).",
@@ -1629,7 +1919,8 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     # PAGE 5: Sector Risk Assessment & Published Methodology
     # =========================================================================
     story.append(PageBreak())
-    story.append(Paragraph("Sector Risk Ranking & Assessment Matrix", st["h2"]))
+    sec_no += 1
+    story.append(_section_header("Sector Risk Ranking & Assessment Matrix", sec_no, st))
     story.append(Paragraph(
         "Quantitative risk scoring across fourteen critical Indian industry sectors. Component scores reflect claimed victim impact (named on leak sites), "
         "actively exploited sector CVEs, malicious C2 and phishing infrastructure, regulatory pressure, and Section 70A Critical Information Infrastructure (CII) designation.",
@@ -1706,6 +1997,8 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         ("RIGHTPADDING", (0, 0), (-1, -1), 5),
     ]))
     story.append(formula_table)
+    story.append(Spacer(1, 5))
+    story.append(create_signal_breakdown_chart(signals))
     story.append(Spacer(1, 3.0))
 
     if source_summary:
@@ -1763,10 +2056,11 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     # PAGE 6: Granular Assessment by Sector (Top 7 Sectors - strictly 1 page)
     # =========================================================================
     story.append(PageBreak())
-    story.append(Paragraph("Granular Assessment by Sector (Top Risk Profiles)", st["h2"]))
+    sec_no += 1
+    story.append(_section_header("Granular Assessment by Sector (Top Risk Profiles)", sec_no, st))
     story.append(Paragraph(
         "Detailed examination of top Indian sectors, including claimed victim entities named on leak sites, threat actor attribution, "
-        "actively exploited CVEs, and component score breakdown. Lower-scoring sectors are detailed in the Sector Risk Ranking table on Page 5.", st["small"]))
+        "actively exploited CVEs, and component score breakdown. Lower-scoring sectors are detailed in the Sector Risk Ranking table (previous section).", st["small"]))
     story.append(Spacer(1, 3))
 
     for s in scored_sectors[:7]:
@@ -1808,7 +2102,8 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     # PAGE 7: Cross-Source Correlation & Infrastructure Co-Occurrence
     # =========================================================================
     story.append(PageBreak())
-    story.append(Paragraph("Cross-Source Correlation & Infrastructure Co-Occurrence", st["h2"]))
+    sec_no += 1
+    story.append(_section_header("Cross-Source Correlation & Infrastructure Co-Occurrence", sec_no, st))
     story.append(Paragraph(
         f"Cross-source telemetry reconciles <b>{correlation.get('corroborated_count', 10)} signals across "
         f"{correlation.get('shared_artefacts_count', 6)} shared artefacts</b>: 3 CVEs tracked across both CISA KEV and NVD "
@@ -1884,7 +2179,8 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     # PAGE 8: Priority Intelligence Signals & Tactical Ingress Telemetry
     # =========================================================================
     story.append(PageBreak())
-    story.append(Paragraph("Highest-Priority Signals (Ranked Actionable Telemetry)", st["h2"]))
+    sec_no += 1
+    story.append(_section_header("Highest-Priority Signals (Ranked Actionable Telemetry)", sec_no, st))
     story.append(Paragraph(
         "Ranked by risk contribution score combining signal severity, confidence, recency, and India relevance. "
         "Single-source leak-site claims are capped at Moderate (0.60 / C3) and designated High-impact, low-confidence rather than Critical. "
@@ -2098,7 +2394,8 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     # PAGE 9: Confirmed Indian Victim Directory & Threat Actor Registry
     # =========================================================================
     story.append(PageBreak())
-    story.append(Paragraph(f"Aggregated Indian Extortion Telemetry by Sector &amp; Corridor ({unique_orgs} Entities Across {total_postings} Postings)", st["h2"]))
+    sec_no += 1
+    story.append(_section_header(f"Aggregated Indian Extortion Telemetry by Sector &amp; Corridor ({unique_orgs} Entities Across {total_postings} Postings)", sec_no, st))
     story.append(Paragraph(
         "Consolidated telemetry of Indian organisations identified on extortion leak sites, aggregated by industry sector, "
         "geographic corridor, and threat actor. Named entities are excluded. "
@@ -2157,7 +2454,8 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     # =========================================================================
     story.append(PageBreak())
     if public_mode:
-        story.append(Paragraph("Community Cyber Defence & Strategic Hardening Guidance", st["h2"]))
+        sec_no += 1
+        story.append(_section_header("Community Cyber Defence & Strategic Hardening Guidance", sec_no, st))
         story.append(Paragraph(
             "Synthesized technical defensive priorities and indicator ingestion protocols derived from public threat telemetry. "
             "Designated TLP:CLEAR for open community redistribution.", st["small"]))
@@ -2196,7 +2494,8 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         ]))
         story.append(pub_guidance_box)
     else:
-        story.append(Paragraph("Informational mapping to CERT-In Directions (not legal advice)", st["h2"]))
+        sec_no += 1
+        story.append(_section_header("Informational mapping to CERT-In Directions (not legal advice)", sec_no, st))
         story.append(Paragraph(
             f"Informational reference mapping under Cyber Security Directions {_esc(DIRECTION_REF)}, "
             f"issued pursuant to Section 70B(6) of the Information Technology Act, 2000. Provided for security context only; does not constitute legal counsel.", st["small"]))
@@ -2263,7 +2562,28 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     # PAGE 11: Analytical Limitations, Admiralty Scale & Disclaimer
     # =========================================================================
     story.append(PageBreak())
-    story.append(Paragraph("Methodology Limitations & Analytical Framework", st["h2"]))
+    sec_no += 1
+    story.append(_section_header("Methodology Limitations & Analytical Framework", sec_no, st))
+
+    purpose_box = Table([[
+        Paragraph(
+            "<b>Purpose, Target Audience &amp; Analytical Boundaries</b><br/>"
+            "<b>Purpose:</b> Strategic threat landscape intelligence synthesizing empirical multi-source telemetry to guide defensive resource allocation, patch prioritization, and incident preparedness across the Indian operating theater.<br/>"
+            "<b>Target Audience:</b> CISOs, Security Directors, SOC Lead Analysts, Risk Officers, and Enterprise IT Administrators responsible for Indian enterprise networks and Section 70A Critical Information Infrastructure (CII).<br/>"
+            "<b>Analytical Limits:</b> Telemetry reflects externally observable perimeter exposure, public extortion disclosures, and actionable malware infrastructure. It cannot prove the absence of undetected intrusions, verify forensic root-cause access vectors for individual private victims, or account for extortion incidents resolved privately without public disclosure. "
+            "Threats in Focus entries are analyst summaries of public reporting and are not scored.",
+            st["callout"])
+    ]], colWidths=[178 * mm])
+    purpose_box.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), PANEL_BG),
+        ("LINEBEFORE", (0, 0), (0, -1), 3, NAVY_SOFT),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 7),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+    ]))
+    story.append(purpose_box)
+    story.append(Spacer(1, 5))
 
     limits = [
         "<b>Extortion Data Bias:</b> Ransomware leak site data is fundamentally biased. Organisations that quietly pay ransoms or resolve intrusions privately do not appear, meaning leak sites systematically under-represent true incident volume.",
@@ -2320,12 +2640,12 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     story.append(Paragraph(
         f"<b>Technical Metadata &amp; Pipeline Provenance:</b><br/>"
         f"<b>Intelligence Feed Snapshot Ingestion Dates (9 Feeds):</b> {_esc(provenance_info['provenance_str'])}<br/>"
-        f"<b>Analytics Engine:</b> Scoring Engine v2.5 (Window end-date deterministic anchor: 2026-10-11 23:59 IST)<br/>"
+        f"<b>Analytics Engine:</b> Scoring Engine v2.5 (Window end-date deterministic anchor: {_esc(DEFAULT_ANCHOR_DT.strftime('%Y-%m-%d %H:%M'))} IST)<br/>"
         f"<b>Companion IOC Artifact:</b> <b>{_esc(csv_filename)}</b> | SHA-256: <code>{_esc(csv_hash)}</code><br/>"
         f"<b>Reference Framework:</b> CERT-In Directions Reference: {_esc(DIRECTION_URL)}<br/>"
         f"<b>Ingested Feed Sources:</b> {_esc(', '.join(sorted(sources)))}", st["small"]))
 
-    doc.build(story, canvasmaker=NumberedCanvas)
+    doc.multiBuild(story, canvasmaker=NumberedCanvas)
 
     # Verify companion CSV hash integrity against PDF text layer
     if os.path.exists(ioc_csv_path):

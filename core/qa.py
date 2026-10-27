@@ -29,7 +29,9 @@ from .correlation import correlate
 from .iocs import get_ioc_summary, compute_file_sha256, extract_iocs, extract_host
 from .scoring_multi import rank_sectors_multi, assign_risk_band
 from .sectors import sector_label
+from .headlines import load_headline_threats
 from .signals import Signal, SignalType
+from .window import IST, is_builtin_anchor, window_end_date
 
 
 def run_qa_audit(signals: List[Signal], scored_sectors: List[Dict],
@@ -78,8 +80,12 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
                    correlation: Dict, pdf_path: str, ioc_csv_path: str,
                    window_days: int = 60, public_mode: bool = False,
                    pulse_path: Optional[str] = None) -> None:
+    # Exact-count reconciliations only hold for the bundled 60-day dataset
+    # under the built-in window anchor
+    fixture = window_days == 60 and is_builtin_anchor()
+
     # 1. Signal Telemetry Reconciliations
-    if window_days == 60:
+    if fixture:
         assert len(signals) == 263, f"QA FAIL: Expected 263 signals, got {len(signals)}"
         sources = {s.source for s in signals}
         assert len(sources) == 9, f"QA FAIL: Expected 9 sources, got {len(sources)}"
@@ -112,7 +118,7 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
 
     # 2. Victim & Corridor Reconciliations
     victims, total_posts, unique_orgs = extract_victim_attributions(signals)
-    if window_days == 60:
+    if fixture:
         assert total_posts == 49, f"QA FAIL: Expected 49 postings, got {total_posts}"
         assert unique_orgs == 44, f"QA FAIL: Expected 44 unique victim entities, got {unique_orgs}"
 
@@ -159,7 +165,7 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
         print(f"  [PASS] Indian Victim & Regional Corridor Reconciliation ({unique_orgs} orgs, {total_posts} postings, 100% accounted)")
 
     # 3. Sector Scoring & Formula Integrity
-    if window_days == 60:
+    if fixture:
         assert len(scored_sectors) == 14, f"QA FAIL: Expected 14 scored sectors, got {len(scored_sectors)}"
     else:
         assert len(scored_sectors) > 0, f"QA FAIL: Expected scored sectors, got {len(scored_sectors)}"
@@ -188,7 +194,7 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
     attributed_iocs = [i for i in extracted_iocs if i['host'] in host_to_sectors]
     unsectored_iocs = [i for i in extracted_iocs if i['host'] not in host_to_sectors]
 
-    if window_days == 60:
+    if fixture:
         infra_col_sum = sum(s["infra_count"] for s in scored_sectors)
         assert infra_col_sum == 35, f"QA FAIL: Expected Infra column sum 35, got {infra_col_sum}"
         assert len(attributed_iocs) == 31, f"QA FAIL: Expected 31 attributed IOCs, got {len(attributed_iocs)}"
@@ -204,7 +210,7 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
         print(f"  [PASS] Sector Scoring & Mathematical Weight Reconciliation ({len(attributed_iocs)} attributed + {len(unsectored_iocs)} unsectored = {len(extracted_iocs)} IOCs)")
 
     # 5. Multi-Source Cross Correlation
-    if window_days == 60:
+    if fixture:
         assert correlation["corroborated_count"] == 10, (
             f"QA FAIL: Expected 10 corroborated signals, got {correlation['corroborated_count']}"
         )
@@ -284,7 +290,7 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
     csv_hash = compute_file_sha256(ioc_csv_path)
     assert len(csv_hash) == 64, f"QA FAIL: Invalid SHA-256 hash length: {csv_hash}"
 
-    if window_days == 60:
+    if fixture:
         ioc_sum = get_ioc_summary(signals, public_mode=public_mode)
         if public_mode:
             assert len(csv_rows) == 50, f"QA FAIL: Expected 50 CSV rows in public mode, got {len(csv_rows)}"
@@ -317,27 +323,65 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
     page_count = len(doc)
     page_texts = [page.get_text() for page in doc]
     doc.close()
-    assert page_count == 11, f"QA FAIL: Strict page count violation: expected 11 pages, got {page_count}"
+    assert 11 <= page_count <= 18, f"QA FAIL: Page count {page_count} outside the expected 11-18 range"
 
     full_pdf_text = ""
     for idx, t in enumerate(page_texts):
         full_pdf_text += f"\n--- PAGE {idx+1} ---\n" + t
 
-    # Recompute companion CSV SHA-256 and compare to hash printed on Page 8 and Page 11
+    # Sections must all be present, in order, each starting on a page
+    end_date = window_end_date()
+    start_date = end_date - timedelta(days=window_days)
+    headlines = load_headline_threats(start=start_date,
+                                      end=max(datetime.now(IST).date(), end_date))
+    section_order = [
+        "India Threat Landscape Bulletin",
+        *(["Threats in Focus"] if headlines else []),
+        "Executive Summary: Threat Judgements & Strategic Outlook",
+        "India Threat Telemetry & Regional Hotspots",
+        "Adversary Landscape & Targeted Technology Infrastructure",
+        "Sector Risk Ranking & Assessment Matrix",
+        "Granular Assessment by Sector (Top Risk Profiles)",
+        "Cross-Source Correlation & Infrastructure Co-Occurrence",
+        "Highest-Priority Signals",
+        "Aggregated Indian Extortion Telemetry by Sector & Corridor",
+        "Community Cyber Defence & Strategic Hardening Guidance" if public_mode else "Informational mapping to CERT-In Directions (not legal advice)",
+        "Methodology Limitations & Analytical Framework",
+    ]
+    norm_pages = [" ".join(t.split()) for t in page_texts]
+    section_page = {}
+    last_page = 0
+    for header_phrase in section_order:
+        # Search from page 2 on so the cover's table of contents does not count
+        first_page = 0 if header_phrase == section_order[0] else 1
+        found = next((i for i in range(max(last_page, first_page), page_count)
+                      if header_phrase in norm_pages[i]), None)
+        assert found is not None, f"QA FAIL: Section '{header_phrase}' missing or out of order"
+        section_page[header_phrase] = found
+        last_page = found
+
+    for i, body in enumerate(norm_pages):
+        assert len(body) > 400, f"QA FAIL: Page {i+1} is nearly empty (orphan page)"
+
+    for h in headlines:
+        norm_title = " ".join(h["title"].split())
+        assert norm_title in " ".join(full_pdf_text.split()), (
+            f"QA FAIL: Headline threat '{h['id']}' missing from Threats in Focus")
+
+    # Recompute companion CSV SHA-256 and compare to the hash printed in the
+    # priority-signals section and the methodology appendix
     recomputed_csv_hash = compute_file_sha256(ioc_csv_path)
     assert len(recomputed_csv_hash) == 64, f"QA FAIL: Invalid recomputed CSV SHA-256 hash length: {recomputed_csv_hash}"
     assert csv_hash == recomputed_csv_hash, f"QA FAIL: CSV hash mismatch: expected {csv_hash}, got {recomputed_csv_hash}"
-    assert recomputed_csv_hash in page_texts[7], (
-        f"QA FAIL: Recomputed CSV SHA-256 hash {recomputed_csv_hash} not found on Page 8 of PDF!"
-    )
-    assert recomputed_csv_hash in page_texts[10], (
-        f"QA FAIL: Recomputed CSV SHA-256 hash {recomputed_csv_hash} not found on Page 11 of PDF!"
-    )
-    print(f"  [PASS] CSV SHA-256 Hash Verification: Recomputed hash matches Page 8 and Page 11 ({recomputed_csv_hash[:16]}...)")
+    for section in ("Highest-Priority Signals", "Methodology Limitations & Analytical Framework"):
+        start_pg = section_page[section]
+        span = "".join(page_texts[start_pg:start_pg + 2])
+        assert recomputed_csv_hash in span, (
+            f"QA FAIL: Recomputed CSV SHA-256 hash {recomputed_csv_hash} not found in '{section}'"
+        )
+    print(f"  [PASS] CSV SHA-256 Hash Verification: Recomputed hash matches IOC section and appendix ({recomputed_csv_hash[:16]}...)")
 
     # Enforce window label consistency
-    end_date = datetime(2026, 10, 11).date()
-    start_date = end_date - timedelta(days=window_days)
     expected_window_str = f"{start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')} ({window_days} days)"
     assert expected_window_str in full_pdf_text, (
         f"QA FAIL: Window label mismatch! Expected '{expected_window_str}' in PDF text layer"
@@ -429,24 +473,6 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
         assert "Informational mapping to CERT-In Directions (not legal advice)" in full_pdf_text, "QA FAIL: Expected informational CERT-In section in standard edition"
         assert "Information Handling & Distribution Restrictions" not in full_pdf_text, "QA FAIL: Forbidden section 'Information Handling & Distribution Restrictions' found in standard edition"
 
-    # Check key section headers on exact pages
-    expected_page_headers = [
-        (1, "India Threat Landscape Bulletin"),
-        (2, "Executive Summary: Threat Judgements & Strategic Outlook"),
-        (3, "India Threat Telemetry & Regional Hotspots"),
-        (4, "Adversary Landscape & Targeted Technology Infrastructure"),
-        (5, "Sector Risk Ranking & Assessment Matrix"),
-        (6, "Granular Assessment by Sector (Top Risk Profiles)"),
-        (7, "Cross-Source Correlation & Infrastructure Co-Occurrence"),
-        (8, "Highest-Priority Signals"),
-        (9, "Aggregated Indian Extortion Telemetry by Sector & Corridor"),
-        (10, "Community Cyber Defence & Strategic Hardening Guidance" if public_mode else "Informational mapping to CERT-In Directions (not legal advice)"),
-        (11, "Methodology Limitations & Analytical Framework"),
-    ]
-    for p_num, header_phrase in expected_page_headers:
-        p_text = page_texts[p_num - 1]
-        assert header_phrase in p_text, f"QA FAIL: Expected '{header_phrase}' on Page {p_num}"
-
     norm_full = " ".join(full_pdf_text.split())
 
     # Shared required architectural elements
@@ -464,7 +490,7 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
         norm_phrase = " ".join(phrase.split())
         assert norm_phrase in norm_full, f"QA FAIL: Required phrase missing from PDF text: '{phrase}'"
 
-    if window_days == 60:
+    if fixture:
         REQUIRED_PHRASES_60 = [
             "12 Aug 2026 to 11 Oct 2026 (60 days)",
             "12-18 Aug",
@@ -489,7 +515,7 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
             ioc_sum["asn_distribution"],
         ]
         if not public_mode:
-            REQUIRED_PHRASES_60.append("Seen in multiple feeds")
+            REQUIRED_PHRASES_60.append("SEEN IN MULTIPLE FEEDS")
 
         for phrase in REQUIRED_PHRASES_60:
             norm_phrase = " ".join(phrase.split())
@@ -535,7 +561,7 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
 
         print("  [PASS] Pulse Brief Layout & Text Layer Audit (Strictly 1 page, TLP:CLEAR, Admiralty rated, Hash verified)")
 
-    print("  [PASS] PDF Layout & Text Integrity (Strictly 11 pages, 0 enum leaks, all headers aligned)")
+    print(f"  [PASS] PDF Layout & Text Integrity ({page_count} pages, 0 enum leaks, all sections in order)")
 
 
 def run_public_qa_audit(signals: List[Signal], scored_sectors: List[Dict],

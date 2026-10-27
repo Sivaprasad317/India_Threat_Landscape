@@ -12,6 +12,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .window import window_end_date
+
 DEFAULT_DB = "cache/india_threats.db"
 
 
@@ -235,6 +237,40 @@ def stats(db_path: str = DEFAULT_DB) -> Dict:
             "nciipc_critical_victims": critical, "intel_items": intel}
 
 
+def upsert_intel_item(item: Dict, db_path: str = DEFAULT_DB) -> bool:
+    """Store a news story keyed by URL. Returns True when newly added."""
+    now = datetime.now(timezone.utc).isoformat()
+    with connect(db_path) as conn:
+        exists = conn.execute("SELECT 1 FROM intel_items WHERE url = ?",
+                              (item["url"],)).fetchone()
+        conn.execute(
+            """INSERT INTO intel_items
+               (title, url, source, published_at, india_relevant,
+                india_reason, summary, collected_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(url) DO UPDATE SET
+                 title = excluded.title, summary = excluded.summary,
+                 india_relevant = excluded.india_relevant,
+                 india_reason = excluded.india_reason""",
+            (item["title"], item["url"], item.get("source", ""),
+             item.get("published_at", ""), int(bool(item.get("india_relevant"))),
+             item.get("india_reason", ""), item.get("summary", ""), now))
+    return exists is None
+
+
+def get_intel_items(since: str, until: str,
+                    db_path: str = DEFAULT_DB) -> List[Dict]:
+    """News stories published in [since, until), ISO strings."""
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            """SELECT title, url, source, published_at, india_relevant,
+                      india_reason, summary
+               FROM intel_items
+               WHERE published_at >= ? AND published_at < ?
+               ORDER BY published_at DESC""", (since, until)).fetchall()
+    return [dict(r) for r in rows]
+
+
 # ---------------------------------------------------------------------------
 # Signal store (multi-source)
 # ---------------------------------------------------------------------------
@@ -316,10 +352,11 @@ def get_signals(days: int = 90, signal_type: str = None,
                 sector: str = None, min_relevance: float = 0.0,
                 db_path: str = DEFAULT_DB,
                 end_date: Optional[Any] = None) -> List[Dict]:
-    anchor = end_date.date() if isinstance(end_date, datetime) else (end_date or datetime(2026, 10, 11).date())
+    anchor = end_date.date() if isinstance(end_date, datetime) else (end_date or window_end_date())
     cutoff = (anchor - timedelta(days=days)).isoformat()
-    clauses = ["observed_at >= ?", "india_relevance >= ?"]
-    params = [cutoff, min_relevance]
+    upper = (anchor + timedelta(days=1)).isoformat()
+    clauses = ["observed_at >= ?", "observed_at < ?", "india_relevance >= ?"]
+    params = [cutoff, upper, min_relevance]
     if signal_type:
         clauses.append("signal_type = ?")
         params.append(signal_type)
@@ -336,16 +373,23 @@ def get_signals(days: int = 90, signal_type: str = None,
 def signal_counts_by_source(days: int = 90,
                             db_path: str = DEFAULT_DB,
                             end_date: Optional[Any] = None) -> List[Dict]:
-    anchor = end_date.date() if isinstance(end_date, datetime) else (end_date or datetime(2026, 10, 11).date())
+    anchor = end_date.date() if isinstance(end_date, datetime) else (end_date or window_end_date())
     cutoff = (anchor - timedelta(days=days)).isoformat()
+    upper = (anchor + timedelta(days=1)).isoformat()
     with connect(db_path) as conn:
         rows = conn.execute(
             """SELECT source, signal_type, COUNT(*) AS n,
                       AVG(india_relevance) AS avg_relevance
-               FROM signals WHERE observed_at >= ?
+               FROM signals WHERE observed_at >= ? AND observed_at < ?
                GROUP BY source, signal_type
-               ORDER BY n DESC""", (cutoff,)).fetchall()
+               ORDER BY n DESC""", (cutoff, upper)).fetchall()
     return [dict(r) for r in rows]
+
+
+def latest_signal_date(db_path: str = DEFAULT_DB) -> str:
+    with connect(db_path) as conn:
+        row = conn.execute("SELECT MAX(observed_at) m FROM signals").fetchone()
+    return (row["m"] or "")[:10]
 
 
 def record_run(collector: str, started: str, finished: str,
