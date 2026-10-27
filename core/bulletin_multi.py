@@ -39,7 +39,7 @@ from .certin import (ANNEXURE_I, DIRECTION_REF, DIRECTION_URL, DISCLAIMER,
                      REPORTING_EMAIL, REPORTING_PHONE, obligations_summary)
 from .geo_india import classify_state, render_official_india_map, STATE_GEO_COORDS
 from .iocs import export_iocs_csv, get_ioc_summary
-from .scoring_multi import SCORING_VERSION, assign_risk_band
+from .scoring_multi import DEFAULT_ANCHOR_DT, SCORING_VERSION, assign_risk_band
 from .sectors import (clean_victim_name as _clean_victim_name, sector_label,
                       short_sector_label)
 from .signals import Signal, SignalType
@@ -2320,7 +2320,7 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     story.append(Paragraph(
         f"<b>Technical Metadata &amp; Pipeline Provenance:</b><br/>"
         f"<b>Intelligence Feed Snapshot Ingestion Dates (9 Feeds):</b> {_esc(provenance_info['provenance_str'])}<br/>"
-        f"<b>Analytics Engine:</b> Scoring Engine v2.5 (Window end-date deterministic anchor: 2026-10-11 23:59 IST)<br/>"
+        f"<b>Analytics Engine:</b> Scoring Engine v2.5 (Window end-date deterministic anchor: {_esc(DEFAULT_ANCHOR_DT.strftime('%Y-%m-%d %H:%M'))} IST)<br/>"
         f"<b>Companion IOC Artifact:</b> <b>{_esc(csv_filename)}</b> | SHA-256: <code>{_esc(csv_hash)}</code><br/>"
         f"<b>Reference Framework:</b> CERT-In Directions Reference: {_esc(DIRECTION_URL)}<br/>"
         f"<b>Ingested Feed Sources:</b> {_esc(', '.join(sorted(sources)))}", st["small"]))

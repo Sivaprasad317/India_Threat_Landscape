@@ -24,6 +24,7 @@ than counting the same as a confirmed breach.
 
 import json
 import math
+import os
 import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -35,7 +36,28 @@ from .signals import Signal, SignalType
 SCORING_VERSION = "2.5"
 
 IST = timezone(timedelta(hours=5, minutes=30))
-DEFAULT_ANCHOR_DT = datetime(2026, 10, 11, 23, 59, 59, tzinfo=IST)
+_BUILTIN_ANCHOR_DT = datetime(2026, 10, 11, 23, 59, 59, tzinfo=IST)
+
+
+def _resolve_anchor() -> datetime:
+    """Fixed window end for deterministic scoring.
+
+    Override with SCORING_ANCHOR (ISO 8601, or the word "now") to move the
+    window; naive timestamps are read as IST.
+    """
+    raw = os.getenv("SCORING_ANCHOR", "").strip()
+    if not raw:
+        return _BUILTIN_ANCHOR_DT
+    if raw.lower() == "now":
+        return datetime.now(IST)
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return _BUILTIN_ANCHOR_DT
+    return dt if dt.tzinfo else dt.replace(tzinfo=IST)
+
+
+DEFAULT_ANCHOR_DT = _resolve_anchor()
 
 COMPONENT_WEIGHTS = {
     "impact": 0.30,

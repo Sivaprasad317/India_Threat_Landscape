@@ -10,17 +10,17 @@ sector risk across all of them and maps activity to CERT-In Annexure I.
 
 ## Setup
 
-```powershell
-cd india-threat-landscape
+```bash
+cd India_Threat_Landscape
 pip install -r requirements.txt
-copy .env.example .env
+cp .env.example .env        # Windows: copy .env.example .env
 python main.py sources
 ```
 
 `sources` shows which collectors can run now and which need a key.
 
-**Eight collectors work with no key at all.** Get the free abuse.ch and OTX
-keys and you are at twelve.
+**Nine collectors work with no key at all.** Get the free abuse.ch and OTX
+keys and you are at thirteen; Shodan (paid) makes fourteen.
 
 ---
 
@@ -49,19 +49,32 @@ Get the two free keys at https://auth.abuse.ch/ and https://otx.alienvault.com.
 
 ## Commands
 
-```powershell
+```bash
 python main.py sources                    # collector status
 python main.py collect                    # run everything ready
 python main.py collect --only cisa_kev,crtsh_typosquat
 python main.py sectors --days 60 --verbose
 python main.py correlate                  # cross-source findings
 python main.py bulletin --days 30 --prepared-by "Siva prasad Boddu"
+python main.py bulletin --days 30 --public   # TLP:CLEAR edition, victims anonymised
+python main.py pulse --days 7             # 1-page executive brief
 python main.py certin --incident "..." --sector BFSI
 python main.py clock --noticed "2026-09-05 08:30"
 python main.py stats
 ```
 
 Run `collect` daily, `bulletin` weekly.
+
+### Scoring window
+
+Scoring is anchored to a fixed window end date so repeated runs give
+identical numbers (the QA gate checks this). To score against current data,
+set `SCORING_ANCHOR` in `.env` to an ISO timestamp (naive = IST) or `now`.
+
+### Tests
+
+`python -m unittest tests.test_threat_intel` (needs `PyMuPDF`, in
+`requirements.txt`, for the PDF QA tests).
 
 ---
 
