@@ -71,7 +71,7 @@ Run `collect` daily, `bulletin` weekly.
 | Section | What it covers |
 |---|---|
 | Cover | Key numbers, a "Bottom line" summary, sector risk chart, contents |
-| 01 Threats in Focus | Headline incidents (e.g. PHP2Shell, LiteLLM, SBI leak): what happened, why it matters for India, what to do, sources; plus recent news |
+| 01 Threats in Focus | The month's headline incidents: an at-a-glance index, full cards (what happened, why it matters for India, what to do, sources) for Critical and India-direct incidents, a compact table for the rest, plus recent news |
 | 02 Executive Summary | Analytical judgements and a 7-day action plan (headline actions first) |
 | 03-09 | Regional hotspots, adversaries, sector scores, sector detail, correlation, priority signals, extortion telemetry |
 | 10 | CERT-In Directions mapping (internal) or hardening guidance (public) |
@@ -192,8 +192,11 @@ the 7-day action plan.
  "sources": [{"name": "Recorded Future", "url": "https://..."}]}
 ```
 
-`severity` is Critical, High, Medium or Low. `keywords` stop the same story
-being repeated in the news list. Entries with missing fields are skipped with a
+`severity` is Critical, High, Medium or Low. Set `"india_direct": true` when
+the incident hit an Indian organisation or came from CERT-In; those entries and
+anything Critical get a full card, and the rest go in a compact table (add an
+optional one-line `"brief"` for it). `keywords` stop the same story being
+repeated in the news list. Entries with missing fields are skipped with a
 warning.
 
 **`security_news` collector**: reads RSS feeds (The Hacker News,

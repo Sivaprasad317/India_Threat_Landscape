@@ -486,6 +486,28 @@ class TestHeadlineThreats(unittest.TestCase):
                                            end=date(2026, 10, 27))
         self.assertEqual([e["id"] for e in loaded], ["crit", "high"])
 
+    def test_india_direct_sorts_first_and_split(self):
+        import json
+        from core.headlines import brief_text, load_headline_threats, split_headlines
+        entries = [
+            self._entry(id="global-high", date="2026-10-22"),
+            self._entry(id="india-high", date="2026-10-10", india_direct=True),
+            self._entry(id="global-crit", severity="Critical", date="2026-10-01",
+                        summary="First sentence. Second sentence."),
+            self._entry(id="bad-flag", india_direct="yes"),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "h.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(entries, f)
+            loaded = load_headline_threats(path)
+        self.assertEqual([e["id"] for e in loaded], ["global-crit", "india-high", "global-high"])
+        cards, brief = split_headlines(loaded)
+        self.assertEqual([e["id"] for e in cards], ["global-crit", "india-high"])
+        self.assertEqual([e["id"] for e in brief], ["global-high"])
+        self.assertEqual(brief_text(loaded[0]), "First sentence.")
+        self.assertEqual(brief_text(self._entry(brief="Short.")), "Short.")
+
     def test_news_watch_drops_covered_stories(self):
         from core.headlines import headline_keywords, news_watch
         terms = headline_keywords([self._entry(keywords=["SBI"], cves=["CVE-2026-1"])])
@@ -555,6 +577,7 @@ class TestBulletinThreatsInFocus(unittest.TestCase):
         self.assertIn("In this report", pages[0])
         self.assertIn("Bottom line", pages[0])
         self.assertIn("01 Threats in Focus", pages[1])
+        self.assertIn("This Month at a Glance", pages[1])
         full = " ".join(pages)
         for title in ("PHP2Shell: unauthenticated remote code execution in the PHP engine",
                       "LiteLLM supply-chain attack",

@@ -40,6 +40,8 @@ def validate_headline(entry: Dict) -> List[str]:
             date.fromisoformat(str(entry["date"])[:10])
         except ValueError:
             problems.append(f"date '{entry['date']}' is not YYYY-MM-DD")
+    if "india_direct" in entry and not isinstance(entry["india_direct"], bool):
+        problems.append("india_direct must be true or false")
     for src in entry.get("sources") or []:
         if not isinstance(src, dict) or not src.get("name") or not src.get("url"):
             problems.append("each source needs a name and a url")
@@ -50,7 +52,8 @@ def validate_headline(entry: Dict) -> List[str]:
 def load_headline_threats(path: str = DEFAULT_PATH,
                           start: Optional[date] = None,
                           end: Optional[date] = None) -> List[Dict]:
-    """Valid entries dated within [start, end], most severe and newest first.
+    """Valid entries dated within [start, end]: most severe first, incidents
+    hitting India directly ahead of global ones, then newest first.
 
     Invalid entries are skipped with a warning rather than failing the whole
     bulletin over one typo in a hand-edited file.
@@ -78,8 +81,25 @@ def load_headline_threats(path: str = DEFAULT_PATH,
         out.append(entry)
 
     out.sort(key=lambda e: (SEVERITY_ORDER[e["severity"]],
+                            not e.get("india_direct", False),
                             -date.fromisoformat(e["date"][:10]).toordinal()))
     return out
+
+
+def split_headlines(entries: List[Dict]):
+    """Full cards for Critical or India-direct incidents; the rest go in a
+    compact table so a busy month does not bury the ones that matter most."""
+    cards = [e for e in entries if e["severity"] == "Critical" or e.get("india_direct")]
+    brief = [e for e in entries if e not in cards]
+    return cards, brief
+
+
+def brief_text(entry: Dict) -> str:
+    """One- or two-sentence summary for the compact table."""
+    if entry.get("brief"):
+        return entry["brief"]
+    first = re.split(r"(?<=[.!?])\s+", entry["summary"].strip(), maxsplit=1)[0]
+    return first
 
 
 def headline_keywords(entries: List[Dict]) -> List[str]:

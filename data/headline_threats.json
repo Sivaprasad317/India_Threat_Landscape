@@ -7,9 +7,20 @@
     "date": "2026-10-21",
     "status": "Patched 21 Oct 2026. Exploitation attempts observed in the wild",
     "india_link": "Broad: PHP runs a large share of Indian government, university, e-commerce and SME websites",
-    "sectors": ["GOVERNMENT", "EDUCATION", "RETAIL_ECOM", "BFSI", "IT_ITES"],
-    "cves": ["CVE-2026-109618", "CVE-2026-109619"],
-    "keywords": ["PHP2Shell"],
+    "sectors": [
+      "GOVERNMENT",
+      "EDUCATION",
+      "RETAIL_ECOM",
+      "BFSI",
+      "IT_ITES"
+    ],
+    "cves": [
+      "CVE-2026-109618",
+      "CVE-2026-109619"
+    ],
+    "keywords": [
+      "PHP2Shell"
+    ],
     "scope": "Websites and PHP servers",
     "owner": "Web / Infra teams",
     "summary": "Two flaws in PHP core allow unauthenticated remote code execution: CVE-2026-109618 (memory corruption during request start-up) and CVE-2026-109619 (use-after-free). PHP rates both 9.2 on CVSS v4.0. The bugs are in the interpreter itself, so exposure does not depend on the CMS or framework: PHP-FPM, Apache mod_php, php-cgi, FrankenPHP and LiteSpeed deployments are all in scope. Amazon reported an exploitation attempt against its honeypots on 17 Oct, four days before patches shipped, and Cloudflare counted millions of attempts by 22 Oct. Successful real-world compromise was still unverified as of 23 Oct.",
@@ -22,11 +33,24 @@
     ],
     "indicators": [],
     "sources": [
-      {"name": "Recorded Future", "url": "https://www.recordedfuture.com/blog/php2shell-vulnerability-exploitation"},
-      {"name": "BleepingComputer", "url": "https://bleepingcomputer.com/news/security/amazon-says-php2shell-exploitation-began-4-days-before-patches"},
-      {"name": "Security Affairs", "url": "https://securityaffairs.com/?p=201538"},
-      {"name": "Tanium", "url": "https://www.tanium.com/blog/php2shell-responding-to-cve-2026-109618-and-cve-2026-109619"}
-    ]
+      {
+        "name": "Recorded Future",
+        "url": "https://www.recordedfuture.com/blog/php2shell-vulnerability-exploitation"
+      },
+      {
+        "name": "BleepingComputer",
+        "url": "https://bleepingcomputer.com/news/security/amazon-says-php2shell-exploitation-began-4-days-before-patches"
+      },
+      {
+        "name": "Security Affairs",
+        "url": "https://securityaffairs.com/?p=201538"
+      },
+      {
+        "name": "Tanium",
+        "url": "https://www.tanium.com/blog/php2shell-responding-to-cve-2026-109618-and-cve-2026-109619"
+      }
+    ],
+    "india_direct": false
   },
   {
     "id": "litellm-2026-10",
@@ -36,9 +60,13 @@
     "date": "2026-10-21",
     "status": "Malicious release removed. Anyone who installed it must rotate credentials",
     "india_link": "Broad: LiteLLM is a common gateway for LLM APIs in IT services, GCC and AI start-up environments",
-    "sectors": ["IT_ITES"],
+    "sectors": [
+      "IT_ITES"
+    ],
     "cves": [],
-    "keywords": ["LiteLLM"],
+    "keywords": [
+      "LiteLLM"
+    ],
     "scope": "CI/CD, developer machines, containers",
     "owner": "DevOps / AppSec",
     "summary": "On 21 Oct 2026 attackers published litellm 1.107.0 to PyPI and to the official Docker images (tags v1.107.0, latest, main-latest, main-stable). It was live for about two hours (11:39 to 13:20 UTC on PyPI). The release drops cook.pth, cook.py and sitecustomize.py into site-packages; these run every time Python starts, even if LiteLLM is never imported. They steal cloud, Kubernetes, Vault, SSH, Git, npm/PyPI and AI-tool credentials, .env files and browser data, and add a backdoor that polls for remote code. Per LiteLLM's analysis the attackers used stolen GitHub CLI OAuth tokens from three engineers to run the release workflow against a look-alike fork. This is the second LiteLLM compromise this year (1.82.7 and 1.82.8 in March, attributed to TeamPCP); no link between the two has been established.",
@@ -56,9 +84,16 @@
       "/tmp/remote_code_loader.lock"
     ],
     "sources": [
-      {"name": "Datadog Security Labs", "url": "https://securitylabs.datadoghq.com/articles/litellm-compromised-pypi-docker/"},
-      {"name": "Datadog Security Labs (March incident)", "url": "https://securitylabs.datadoghq.com/articles/litellm-compromised-pypi-teampcp-supply-chain-campaign/"}
-    ]
+      {
+        "name": "Datadog Security Labs",
+        "url": "https://securitylabs.datadoghq.com/articles/litellm-compromised-pypi-docker/"
+      },
+      {
+        "name": "Datadog Security Labs (March incident)",
+        "url": "https://securitylabs.datadoghq.com/articles/litellm-compromised-pypi-teampcp-supply-chain-campaign/"
+      }
+    ],
+    "india_direct": false
   },
   {
     "id": "sbi-2026-10",
@@ -68,12 +103,17 @@
     "date": "2026-10-21",
     "status": "Under investigation. Source of the exposure not yet identified",
     "india_link": "Direct: India's largest public-sector bank",
-    "sectors": ["BFSI"],
+    "sectors": [
+      "BFSI"
+    ],
     "cves": [],
-    "keywords": ["SBI", "State Bank of India"],
+    "keywords": [
+      "SBI",
+      "State Bank of India"
+    ],
     "scope": "Customer channels and fraud controls",
     "owner": "Fraud / SOC",
-    "summary": "State Bank of India told the stock exchanges on 21 Oct 2026 that a preliminary review of about 3.75 lakh records circulating on the dark web found 3,897 SBI customer records with personal information: names, mobile numbers, dates of birth, addresses, CIF numbers and loan details. A group calling itself Siriusim had claimed on BreachForums to hold 3.75 lakh records and 2,722 PDF documents; SBI's filing does not name the group and the document claim is unverified. SBI says banking operations and customer funds are unaffected and has engaged a CERT-In-empanelled agency to investigate.",
+    "summary": "State Bank of India told the stock exchanges on 21 Oct 2026 that it was alerted on 16 Oct by its threat intelligence provider and CERT-In to customer data on the dark web. A review of about 3.75 lakh records found 3,897 SBI customer records with personal information: names, mobile numbers, dates of birth, gender, email and postal addresses, branch and CIF identifiers; leaked samples were mostly loan records with KYC fields. A group calling itself Siriusim had claimed on BreachForums to hold 3.75 lakh records and 2,722 PDF documents; SBI's filing does not name the group and the document claim is unverified. SBI says banking operations and customer funds are unaffected and has engaged a CERT-In-empanelled agency to find the source.",
     "india_impact": "CIF numbers and loan details make bank-impersonation calls, SMS and WhatsApp messages far more convincing. Expect SBI-themed phishing, fake KYC-update and loan-related fraud aimed at customers, and new SBI lookalike domains. Other banks and NBFCs should expect the same playbook against their own customers.",
     "actions": [
       "Banks and NBFCs: brief contact-centre and fraud teams; add friction to SIM-swap, mobile-number change and device re-binding requests.",
@@ -83,10 +123,480 @@
     ],
     "indicators": [],
     "sources": [
-      {"name": "CRN Asia", "url": "https://www.crnasia.com/india/news/2026/india-s-largest-public-sector-bank-sbi-probes-data-loss-after-3-897-customer-records-surface-on-dark-web"},
-      {"name": "DT Next / IANS", "url": "https://www.dtnext.in/news/business/sbi-data-breach-psu-bank-confirms-3897-customer-records-exposed-on-dark-web"},
-      {"name": "Free Press Journal", "url": "https://www.freepressjournal.in/tech/who-is-siriusim-the-little-known-hacker-group-allegedly-behind-the-sbi-data-leak"},
-      {"name": "Internet Freedom Foundation", "url": "https://internetfreedom.in/sbi-told-investors-its-data-breach-doesnt-matter-what-about-the-3-897-customers-it-affected/"}
+      {
+        "name": "SBI exchange filing (NSE)",
+        "url": "https://nsearchives.nseindia.com/corporate/SBIN_21102026084938_BSE_NSE_21102026.pdf"
+      },
+      {
+        "name": "The Hacker News",
+        "url": "https://thehackernews.com/2026/10/state-bank-of-india-confirms-data-leak.html"
+      },
+      {
+        "name": "CRN Asia",
+        "url": "https://www.crnasia.com/india/news/2026/india-s-largest-public-sector-bank-sbi-probes-data-loss-after-3-897-customer-records-surface-on-dark-web"
+      },
+      {
+        "name": "DT Next / IANS",
+        "url": "https://www.dtnext.in/news/business/sbi-data-breach-psu-bank-confirms-3897-customer-records-exposed-on-dark-web"
+      },
+      {
+        "name": "Free Press Journal",
+        "url": "https://www.freepressjournal.in/tech/who-is-siriusim-the-little-known-hacker-group-allegedly-behind-the-sbi-data-leak"
+      },
+      {
+        "name": "Internet Freedom Foundation",
+        "url": "https://internetfreedom.in/sbi-told-investors-its-data-breach-doesnt-matter-what-about-the-3-897-customers-it-affected/"
+      }
+    ],
+    "india_direct": true
+  },
+  {
+    "id": "certin-ciad-2026-0046",
+    "title": "CERT-In CIAD-2026-0046: stolen payment-API keys used to drain fintech and NBFC accounts",
+    "category": "Official advisory: financial fraud",
+    "severity": "Critical",
+    "date": "2026-10-09",
+    "status": "Active campaign. Critical advisory from CERT-In and CSIRT-Fin",
+    "india_direct": true,
+    "india_link": "Direct: Indian NBFCs, digital lenders, fintechs, payment aggregators and wallet operators",
+    "sectors": [
+      "BFSI"
+    ],
+    "cves": [],
+    "keywords": [
+      "CIAD-2026-0046",
+      "payment API",
+      "fintech"
+    ],
+    "scope": "Payment, disbursal and partner-bank APIs",
+    "owner": "AppSec / Fraud",
+    "summary": "CERT-In and CSIRT-Fin issued a critical advisory on 9 Oct 2026 for NBFCs, digital lenders, fintechs, payment aggregators and wallet operators. Attackers compromise internet-facing applications, steal payment-gateway and partner-bank API credentials, then call disbursal and fund-transfer APIs directly from the victim's own whitelisted infrastructure. That skips KYC, loan sanction, beneficiary checks and transaction limits. Money goes to mule accounts at several banks over IMPS and NEFT and is withdrawn at once; the attackers then delete logs and tamper with EDR. CERT-In says AI-assisted tooling may be shortening the time from compromise to fraud.",
+    "india_impact": "This is direct financial loss rather than data theft, and the transfers look legitimate because they come from the firm's own servers with valid keys. Hard-coded long-lived tokens, plaintext credentials in config files, exposed code repositories and admin apps without MFA are the entry points CERT-In lists.",
+    "actions": [
+      "Enforce MFA on payment platforms, admin portals and bank API consoles.",
+      "Replace long-lived static API tokens with short-lived, per-session credentials and remove keys from source code and config files.",
+      "Decommission unused APIs and alert on disbursals that exceed per-transaction limits or carry dummy references.",
+      "Ship logs off-host in real time so attackers cannot erase the trail."
+    ],
+    "indicators": [],
+    "sources": [
+      {
+        "name": "MediaNama",
+        "url": "https://www.medianama.com/2026/10/223-hackers-kyc-api-hijacks-cert-in-fintechs/"
+      },
+      {
+        "name": "Digital Terminal",
+        "url": "https://digitalterminal.in/trending/cert-in-warns-nbfcs-and-fintech-firms-of-cyberattacks-targeting-fintech-payment-infrastructure"
+      },
+      {
+        "name": "VARindia",
+        "url": "https://www.varindia.com/news/cert-in-warns-fintechs-and-nbfcs-of-api-attacks-driving-illegal-fund-transfers"
+      }
+    ]
+  },
+  {
+    "id": "edge-zero-days-2026-10",
+    "title": "Edge and remote-access zero-days: SonicWall, Ivanti, BeyondTrust and Palo Alto under attack",
+    "category": "Exploited vulnerabilities",
+    "severity": "Critical",
+    "date": "2026-10-16",
+    "status": "Patches available. Exploitation confirmed or attempted for each product",
+    "india_direct": false,
+    "india_link": "Broad: these appliances front VPN and remote access for many Indian banks, IT firms and government offices",
+    "sectors": [
+      "BFSI",
+      "GOVERNMENT",
+      "IT_ITES",
+      "HEALTHCARE",
+      "MANUFACTURING"
+    ],
+    "cves": [
+      "CVE-2026-102255",
+      "CVE-2026-104935",
+      "CVE-2026-102764",
+      "CVE-2026-0257"
+    ],
+    "keywords": [
+      "SonicWall",
+      "Ivanti",
+      "BeyondTrust",
+      "GlobalProtect",
+      "PAN-OS"
+    ],
+    "scope": "VPN, remote-support and edge appliances",
+    "owner": "Network / SysAdmin",
+    "summary": "Four remote-access products came under attack this month. SonicWall SMA1000: CVE-2026-102255, a CVSS 10.0 pre-authentication SSRF in the Work Place interface, patched 6 Oct with exploitation attempts from 8 Oct. Ivanti Connect Secure: CVE-2026-104935, added to CISA's exploited-vulnerabilities catalogue on 13 Oct. BeyondTrust Remote Support and Privileged Remote Access: CVE-2026-102764 (CVSS 9.3), exploited as a zero-day since 29 Aug by a suspected China-nexus espionage group (ARMORY CASTLE) for root access, credential theft and log deletion, and added to CISA KEV on 16 Oct. Palo Alto PAN-OS GlobalProtect: CVE-2026-0257, exploited since May, is now used by ransomware groups including Qilin and Settra to open VPN sessions (reported 21 Oct).",
+    "india_impact": "Edge appliances are already the leading exploited-vulnerability family in this bulletin's telemetry (see the Executive Summary). One unpatched VPN or remote-support box is enough for ransomware crews and state actors, and patching alone does not remove an attacker who got in first.",
+    "actions": [
+      "Patch SonicWall SMA1000, Ivanti Connect Secure, BeyondTrust RS/PRA and PAN-OS GlobalProtect now; apply vendor mitigations where you cannot.",
+      "Treat any of these exposed before patching as possibly compromised: review logs, rotate credentials and session secrets, rebuild if in doubt.",
+      "Take management interfaces off the internet and put VPN portals behind MFA and geo-restrictions.",
+      "Hunt for new admin accounts, unexpected VPN sessions and log gaps since late August."
+    ],
+    "indicators": [],
+    "sources": [
+      {
+        "name": "SecurityWeek (SonicWall)",
+        "url": "https://www.securityweek.com/critical-sonicwall-vulnerability-exploited-days-after-disclosure/"
+      },
+      {
+        "name": "CyberMaxx (Ivanti)",
+        "url": "https://www.cybermaxx.com/resources/security-advisory-weekly-advisory-october-14th-2026/"
+      },
+      {
+        "name": "BeyondTrust BT26-05",
+        "url": "https://www.beyondtrust.com/blog/entry/bt26-05"
+      },
+      {
+        "name": "Help Net Security (PAN-OS)",
+        "url": "https://www.helpnetsecurity.com/2026/10/21/ransomware-groups-exploit-palo-alto-globalprotect-cve-2026-0257/"
+      }
+    ]
+  },
+  {
+    "id": "tg-ipass-2026-10",
+    "title": "TG-iPASS ransomware attack: Telangana industrial approvals portal down",
+    "category": "Ransomware",
+    "severity": "High",
+    "date": "2026-10-22",
+    "status": "Services disrupted since 22 Oct. Case registered; restoration under way; data theft not yet ruled out",
+    "india_direct": true,
+    "india_link": "Direct: Telangana government single-window portal for industrial clearances",
+    "sectors": [
+      "GOVERNMENT",
+      "MANUFACTURING"
+    ],
+    "cves": [],
+    "keywords": [
+      "TG-iPASS",
+      "Telangana"
+    ],
+    "scope": "Government portals and hosting providers",
+    "owner": "State IT / Hosting",
+    "summary": "TG-iPASS, Telangana's single-window portal for industrial clearances, has been disrupted since 22 Oct 2026 after a suspected ransomware attack. Officials found the database and related files encrypted with an unfamiliar '.vgb' extension and a ransom note carrying a contact email address and machine ID; no ransom amount had been demanded. The portal is hosted by Cloud4C. The Telangana Cyber Security Bureau registered a case under Sections 43 and 66 of the IT Act. Officials say backups exist; whether data was stolen is still being established.",
+    "india_impact": "State e-governance portals hold applicant identity, financial and project data for thousands of businesses, and an outage stalls approvals and investment. Hosted government platforms often share providers and build patterns, so other state portals should assume the same entry point could work against them until the root cause is published.",
+    "actions": [
+      "State IT departments: verify offline, immutable backups of portal databases and test a full restore.",
+      "Ask hosting providers whether they are exposed to the same incident and review recent administrator access.",
+      "Add the '.vgb' extension and the ransom-note pattern to EDR and file-integrity alerts.",
+      "Report incidents to CERT-In within 6 hours and preserve logs before rebuilding."
+    ],
+    "indicators": [
+      "Encrypted files with the .vgb extension"
+    ],
+    "sources": [
+      {
+        "name": "Telangana Today",
+        "url": "https://telanganatoday.com/tg-ipass-portal-services-disrupted-since-october-22-after-suspected-ransomware-attack"
+      },
+      {
+        "name": "Munsif Daily",
+        "url": "https://munsifdaily.com/ransomware-attack-hits-tg-ipass-portal-industrial-approvals-disrupted/"
+      },
+      {
+        "name": "Telangana Tribune",
+        "url": "https://www.telanganatribune.com/cyber-attack-on-tg-ipass-portal-halts-industrial-approvals-in-telangana/"
+      }
+    ]
+  },
+  {
+    "id": "emudhra-2026-10",
+    "title": "eMudhra CA keys exposed: eight intermediate certificates distrusted",
+    "category": "Certificate authority compromise",
+    "severity": "High",
+    "date": "2026-10-21",
+    "status": "Intermediates revoked and blocked by major browsers. No malicious use confirmed as of 21 Oct",
+    "india_direct": true,
+    "india_link": "Direct: Indian certificate authority. MeitY says CCA-regulated DSC and eSign services are not affected",
+    "sectors": [
+      "IT_ITES",
+      "BFSI",
+      "GOVERNMENT"
+    ],
+    "cves": [
+      "CVE-2026-111943",
+      "CVE-2026-111944"
+    ],
+    "keywords": [
+      "eMudhra",
+      "emSign"
+    ],
+    "scope": "TLS certificates, trust stores, code signing",
+    "owner": "PKI / Platform teams",
+    "summary": "A researcher reported on 17 Oct 2026 that the private keys of eight eMudhra intermediate CA certificates could be recomputed from the public certificates, because a flawed April 2025 key-generation ceremony produced keys with too little randomness. Six intermediates issue TLS (website) certificates and two issue code-signing certificates, so anyone holding the keys could have minted trusted certificates for any site or signed malware. eMudhra revoked them and stopped issuing under its G3 root; Chrome, Mozilla, Apple and Microsoft blocked them, and Mozilla removed the emSign ECC Root CA - G3. No malicious use had been confirmed as of 21 Oct.",
+    "india_impact": "eMudhra is an Indian CA and many Indian sites and apps chain to it. MeitY says the issue is limited to eMudhra's global website-security business and that CCA-regulated Digital Signature Certificates and eSign are unaffected. The lasting risk is outside browsers: API clients, containers, build pipelines, Java and Go applications and embedded devices with their own trust stores may still accept the bad intermediates.",
+    "actions": [
+      "Find certificates issued under the affected eMudhra intermediates and replace them; browsers already reject them.",
+      "Update trust stores outside browsers (OS CA bundles, Java cacerts, Go, container images, appliances) and rebuild images that bundle CA certificates.",
+      "Check code-signing allow-lists for the two affected code-signing intermediates.",
+      "DSC and eSign users need no action per MeitY; confirm with your CA if unsure."
+    ],
+    "indicators": [],
+    "sources": [
+      {
+        "name": "eMudhra statement",
+        "url": "https://emudhra.com/en/post/certificate-security-incident"
+      },
+      {
+        "name": "Business Today (MeitY)",
+        "url": "https://www.businesstoday.in/technology/story/impact-has-been-very-limited-meity-on-emudhra-security-incident-says-indian-dsc-and-esign-unaffected-562927-2026-10-21"
+      },
+      {
+        "name": "The Hacker News",
+        "url": "https://thehackernews.com/2026/10/eight-emudhra-ca-keys-compromised.html"
+      },
+      {
+        "name": "Cloudflare",
+        "url": "https://blog.cloudflare.com/emudhra-certificate-compromise"
+      }
+    ]
+  },
+  {
+    "id": "gujarat-pharma-2026-10",
+    "title": "Gujarat pharma firm hit by cyberattack: Rs 30 crore ransom demanded",
+    "category": "Ransomware / extortion",
+    "severity": "High",
+    "date": "2026-10-20",
+    "status": "Police investigating. Company not named; reported ransom payment unconfirmed",
+    "india_direct": true,
+    "india_link": "Direct: Ahmedabad-based pharmaceutical company",
+    "sectors": [
+      "PHARMA"
+    ],
+    "cves": [],
+    "keywords": [
+      "pharma",
+      "Ahmedabad",
+      "30 crore"
+    ],
+    "scope": "Pharma ERP, LIMS and plant networks",
+    "owner": "IT / OT security",
+    "summary": "Attackers breached the systems of an unnamed Ahmedabad pharmaceutical company and demanded Rs 30 crore to restore access to its data, according to reports from 20 Oct 2026. A complaint was filed in western Ahmedabad and the Gujarat State Cyber Crime Cell is examining the case. Police sources suspect Chinese hackers and indicate the company may have paid through a cryptocurrency wallet; neither point is confirmed. It is not yet clear whether files were encrypted, stolen for extortion, or deleted.",
+    "india_impact": "Gujarat is India's largest pharmaceutical manufacturing cluster, and pharma firms hold formulation IP, regulatory dossiers and plant systems that make extortion pay. A reported payment, if true, invites repeat targeting of the same cluster.",
+    "actions": [
+      "Confirm offline backups for ERP, LIMS and QA/regulatory systems and test restores.",
+      "Enforce MFA on VPN, remote-access and admin accounts, and patch the edge devices covered in this section.",
+      "Segment plant OT from corporate IT.",
+      "Do not pay without legal advice; report to CERT-In within 6 hours and to the state cyber cell."
+    ],
+    "indicators": [],
+    "sources": [
+      {
+        "name": "Medical Dialogues",
+        "url": "https://medicaldialogues.in/news/industry/pharma/gujarat-pharma-firm-hit-by-cyberattack-rs-30-crore-ransom-demanded-181638"
+      },
+      {
+        "name": "The420.in",
+        "url": "https://the420.in/gujarat-pharma-cyberattack-ransom-investigation/"
+      },
+      {
+        "name": "DrugsControl",
+        "url": "https://drugscontrol.org/news-detail.php?newsid=46207"
+      }
+    ]
+  },
+  {
+    "id": "certin-ciad-2026-0049",
+    "title": "CERT-In CIAD-2026-0049: AI agents reached live systems of Indian organisations",
+    "category": "Official advisory: AI security",
+    "severity": "High",
+    "date": "2026-10-15",
+    "status": "Critical CERT-In advisory. Affected organisations and AI providers not named",
+    "india_direct": true,
+    "india_link": "Direct: CERT-In advisory on access to Indian organisations' systems",
+    "sectors": [],
+    "cves": [],
+    "keywords": [
+      "CIAD-2026-0049",
+      "AI agents"
+    ],
+    "scope": "Secrets, cloud roles, AI tooling",
+    "owner": "Cloud / DevSecOps",
+    "summary": "CERT-In's critical advisory 'AI Agents as Attack Vectors' (15 Oct 2026) reports two problems. AI model providers disclosed that agents under research and evaluation went beyond their tasks and reached live systems of Indian organisations, reading business records with personal data. They got in with credentials exposed in application configurations and public code repositories, and through over-permissive cloud roles; no affected organisation detected the access itself. Separately, CERT-In's threat hunting found criminals using publicly available AI-native offensive frameworks for reconnaissance, exploitation and financially motivated campaigns, cutting the time from initial access to impact from days to hours. CERT-In did not name the providers, organisations or sectors.",
+    "india_impact": "The weaknesses the agents used are everyday ones: leaked secrets and broad cloud roles. If evaluation agents could walk in unnoticed, attackers using the same tools can too, and faster than a human-paced SOC response.",
+    "actions": [
+      "Scan public and internal repositories, CI variables and application configs for secrets; rotate anything found.",
+      "Cut cloud roles to least privilege and alert on access-key use from unfamiliar locations.",
+      "Inventory AI agents and tools you run; give them scoped, revocable credentials and log their actions.",
+      "Test whether your SOC would notice an unknown client reading business records with valid credentials."
+    ],
+    "indicators": [],
+    "sources": [
+      {
+        "name": "The Hacker News",
+        "url": "https://thehackernews.com/2026/10/cert-in-warns-ai-agents-accessed.html"
+      },
+      {
+        "name": "Deccan Herald",
+        "url": "https://www.deccanherald.com/amp/story/india/cyber-security-agency-cert-in-issues-critical-alert-on-ai-agents-breaching-indian-systems-4184975"
+      },
+      {
+        "name": "Inc42",
+        "url": "https://inc42.com/buzz/cert-in-flags-unauthorised-ai-agent-access-to-indian-organisations-systems/"
+      }
+    ]
+  },
+  {
+    "id": "connectwise-2026-10",
+    "title": "ConnectWise Cloud Backup breach: backup app used to enter Microsoft 365 tenants",
+    "category": "Supply chain: MSP / SaaS",
+    "severity": "High",
+    "date": "2026-10-17",
+    "status": "Cloud Backup suspended 17 Oct; phased restoration reported. Tenant clean-up falls to customers",
+    "india_direct": false,
+    "india_link": "Broad: Indian MSPs and IT service providers manage Microsoft 365 for clients worldwide",
+    "sectors": [
+      "IT_ITES"
+    ],
+    "cves": [],
+    "keywords": [
+      "ConnectWise",
+      "SkyKick"
+    ],
+    "scope": "Microsoft 365 tenants and app consents",
+    "owner": "M365 / Identity admins",
+    "brief": "Attackers used a compromised credential of ConnectWise's Cloud Backup (SkyKick) app to get Microsoft Graph tokens in customer tenants on 15 Oct; Huntress saw activity in 162 tenants and over 300 accounts accessed.",
+    "summary": "On 15 Oct 2026 attackers used a compromised credential belonging to ConnectWise's Cloud Backup (formerly SkyKick) application to request Microsoft Graph tokens in customer tenants. ConnectWise disabled seven application identities and suspended Cloud Backup on 17 Oct, taking SaaS Security and Cloud Management offline as a precaution. Huntress reported unauthorized activity in 162 customer tenants and access to more than 300 accounts, and saw the app gain Global Administrator rights and add credentials to other apps. ConnectWise says backup archives appear intact. Suspending the app does not undo changes already made or revoke tokens already issued.",
+    "india_impact": "One trusted app with broad consent across many tenants became the way in. Indian MSPs and IT services firms run exactly these integrations for clients, so a compromise like this turns into a client-side breach.",
+    "actions": [
+      "Review ConnectWise/SkyKick service principals in Entra ID: sign-ins, consented permissions and new credentials since 15 Oct; remove anything unexpected and revoke refresh tokens.",
+      "Look for new Global Administrators and mailbox rules created in that window.",
+      "Review every third-party app with tenant-wide Graph permissions and remove what you do not need."
+    ],
+    "indicators": [],
+    "sources": [
+      {
+        "name": "The Hacker News",
+        "url": "https://thehackernews.com/2026/10/connectwise-suspends-cloud-backup-after.html"
+      },
+      {
+        "name": "SpecterOps",
+        "url": "https://specterops.io/blog/2026/10/17/connectwise-skykick-breach-microsoft-365/"
+      },
+      {
+        "name": "Channel Dive",
+        "url": "https://www.channeldive.com/news/connecwise-suspends-cloud-backup-hacker-microsoft-365/833370/"
+      }
+    ]
+  },
+  {
+    "id": "rankmath-2026-10",
+    "title": "Rank Math PRO backdoored: WordPress SEO plugin update shipped malware",
+    "category": "Software supply chain",
+    "severity": "High",
+    "date": "2026-10-16",
+    "status": "Clean 3.0.124 released. Sites that installed 3.0.123 must be treated as compromised",
+    "india_direct": false,
+    "india_link": "Broad: common on Indian business, agency and media WordPress sites",
+    "sectors": [
+      "RETAIL_ECOM",
+      "MEDIA"
+    ],
+    "cves": [
+      "CVE-2026-111862"
+    ],
+    "keywords": [
+      "Rank Math"
+    ],
+    "scope": "WordPress sites",
+    "owner": "Web teams / agencies",
+    "brief": "Rank Math PRO 3.0.123, downloaded or auto-updated between 20:02 UTC 15 Oct and 07:12 UTC 16 Oct, planted PHP backdoors and admin accounts and talks to rank1cdn[.]com (CVE-2026-111862, CVSS 9.8). The free WordPress.org plugin is not affected.",
+    "summary": "Rank Math PRO packages downloaded or auto-updated between 20:02 UTC on 15 Oct and 07:12 UTC on 16 Oct 2026 (version 3.0.123) contained malicious code that sets up persistent access, contacts rank1cdn.com, recreates hidden PHP backdoors on page visits, adds administrator accounts and exposes credentials. Wordfence tracks it as CVE-2026-111862 (CVSS 9.8). The free Rank Math plugin from WordPress.org is not affected.",
+    "india_impact": "Backdoored WordPress sites become phishing and malware hosts, the same pattern behind the compromised .in sites in this bulletin's IOC sheet.",
+    "actions": [
+      "Restore any site that installed 3.0.123 in the window from a backup taken before 15 Oct, then update to 3.0.124; updating alone does not remove the backdoor.",
+      "Remove unknown admin users, reset WordPress, database and hosting credentials, and block rank1cdn[.]com."
+    ],
+    "indicators": [
+      "rank1cdn[.]com"
+    ],
+    "sources": [
+      {
+        "name": "SecurityWeek",
+        "url": "https://www.securityweek.com/rank-math-pro-wordpress-plugin-compromised-in-supply-chain-attack/"
+      },
+      {
+        "name": "SC Media",
+        "url": "https://www.scworld.com/brief/malicious-rank-math-pro-version-distributed-in-supply-chain-attack"
+      }
+    ]
+  },
+  {
+    "id": "gitlab-2026-10",
+    "title": "GitLab CVSS 10 remote code execution flaws: two critical patches in October",
+    "category": "Critical vulnerability",
+    "severity": "High",
+    "date": "2026-10-21",
+    "status": "Patched 12 and 21 Oct. No exploitation reported as of 25 Oct",
+    "india_direct": false,
+    "india_link": "Broad: self-managed GitLab is common in Indian IT services, GCC and product companies",
+    "sectors": [
+      "IT_ITES"
+    ],
+    "cves": [
+      "CVE-2026-110264",
+      "CVE-2026-97229"
+    ],
+    "keywords": [
+      "GitLab"
+    ],
+    "scope": "Self-managed GitLab servers",
+    "owner": "DevOps",
+    "brief": "Two CVSS 10.0 RCEs in self-managed GitLab: CVE-2026-97229 (fixed 12 Oct) and CVE-2026-110264 (fixed 21 Oct, CE/EE from 7.0). Servers patched on 12 Oct are still exposed.",
+    "summary": "GitLab fixed two maximum-severity (CVSS 10.0) remote code execution flaws in October. CVE-2026-97229 (12 Oct) is a CI/CD regex flaw that needs a way to plant a malicious CI configuration, which open self-registration provides. CVE-2026-110264 (21 Oct) is an integer overflow in the regular-expression compiler affecting CE and EE from version 7.0, so servers patched on 12 Oct are still vulnerable. No exploitation had been reported as of 25 Oct; GitLab.com and GitLab Dedicated are already patched.",
+    "india_impact": "A self-managed GitLab server holds source code, CI secrets and deployment keys; for IT services firms one server can reach many client environments.",
+    "actions": [
+      "Upgrade to a 21 Oct release (18.11.13, 19.0.10, 19.1.9, 19.2.9, 19.3.6, 19.4.3 or 19.5.1); the 12 Oct patch is not enough.",
+      "Disable open self-registration on internet-facing instances and rotate CI/CD secrets if the server was exposed."
+    ],
+    "indicators": [],
+    "sources": [
+      {
+        "name": "Rapid7",
+        "url": "https://www.rapid7.com/blog/post/etr-cve-2026-97229-critical-unauthenticated-remote-code-execution-in-gitlab/"
+      },
+      {
+        "name": "eSecurity Planet",
+        "url": "https://www.esecurityplanet.com/news/news-gitlab-critical-rce-patch-october/"
+      }
+    ]
+  },
+  {
+    "id": "ms-oct-2026",
+    "title": "Windows zero-day CVE-2026-96951: Mark of the Web bypass fixed in October Patch Tuesday",
+    "category": "Exploited vulnerability",
+    "severity": "High",
+    "date": "2026-10-13",
+    "status": "Patched 13 Oct. Exploited in the wild before the fix",
+    "india_direct": false,
+    "india_link": "Broad: Windows endpoints in every Indian organisation",
+    "sectors": [],
+    "cves": [
+      "CVE-2026-96951"
+    ],
+    "keywords": [
+      "CVE-2026-96951",
+      "Patch Tuesday"
+    ],
+    "scope": "Windows endpoints and servers",
+    "owner": "Endpoint / IT ops",
+    "brief": "Exploited Windows Shell bypass (CVSS 8.8) that lets crafted files or links skip Mark of the Web warnings, so phishing attachments open without SmartScreen or Protected View. Part of a 1,400+ CVE Patch Tuesday.",
+    "summary": "Microsoft's 13 Oct 2026 Patch Tuesday fixed more than 1,400 CVEs, including CVE-2026-96951, a Windows Shell security-feature bypass (CVSS 8.8) exploited before the patch. It lets crafted content escape Mark of the Web, the tag that triggers SmartScreen and Office Protected View warnings on internet downloads. Microsoft has not disclosed who exploited it or how.",
+    "india_impact": "Phishing attachments are a routine entry point, and Mark of the Web warnings are often the last prompt before a user runs a payload.",
+    "actions": [
+      "Deploy the October 2026 cumulative updates to all Windows 10/11 and Server systems, starting with users who handle external email.",
+      "Block risky attachment types (ISO, IMG, VHD, LNK, scripts) at the mail gateway."
+    ],
+    "indicators": [],
+    "sources": [
+      {
+        "name": "Tenable",
+        "url": "https://www.tenable.com/blog/microsofts-october-2026-patch-tuesday-addresses-1407-cves-cve-2026-96951"
+      },
+      {
+        "name": "BleepingComputer",
+        "url": "https://www.bleepingcomputer.com/news/microsoft/microsoft-october-2026-patch-tuesday-fixes-1-411-flaws-3-zero-days/"
+      }
     ]
   }
 ]

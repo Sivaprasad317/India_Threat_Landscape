@@ -41,7 +41,8 @@ from .certin import (ANNEXURE_I, DIRECTION_REF, DIRECTION_URL, DISCLAIMER,
                      REPORTING_EMAIL, REPORTING_PHONE, obligations_summary)
 from .database import get_intel_items
 from .geo_india import classify_state, render_official_india_map, STATE_GEO_COORDS
-from .headlines import format_date, headline_keywords, load_headline_threats, news_watch
+from .headlines import (brief_text, format_date, headline_keywords, load_headline_threats,
+                        news_watch, split_headlines)
 from .iocs import export_iocs_csv, get_ioc_summary
 from .scoring_multi import DEFAULT_ANCHOR_DT, SCORING_VERSION, assign_risk_band
 from .sectors import (SECTORS, clean_victim_name as _clean_victim_name,
@@ -1235,6 +1236,46 @@ def _headline_card(h: Dict, st) -> Table:
     return card
 
 
+def _headline_index_table(entries: List[Dict], st) -> Table:
+    rows = [[Paragraph("<b>Date</b>", st["cellb"]),
+             Paragraph("<b>Incident</b>", st["cellb"]),
+             Paragraph("<b>Type</b>", st["cellb"]),
+             Paragraph("<b>Severity</b>", st["cellb"]),
+             Paragraph("<b>India</b>", st["cellb"])]]
+    for h in entries:
+        sev_hex = SEVERITY_HEX.get(h["severity"], "#5B6573")
+        rows.append([
+            Paragraph(format_date(h["date"]), st["cell"]),
+            Paragraph(_esc(h["title"].split(":")[0]), st["cell"]),
+            Paragraph(_esc(h["category"]), st["cell"]),
+            Paragraph(f'<font color="{sev_hex}"><b>{h["severity"]}</b></font>', st["cell"]),
+            Paragraph("Direct" if h.get("india_direct") else "Broad", st["cell"]),
+        ])
+    return _table(rows, [20 * mm, 78 * mm, 48 * mm, 16 * mm, 16 * mm], st, zebra=True,
+                  padding=(1.6, 1.6, 3, 3))
+
+
+def _headline_brief_table(entries: List[Dict], st) -> Table:
+    rows = [[Paragraph("<b>Date</b>", st["cellb"]),
+             Paragraph("<b>Incident</b>", st["cellb"]),
+             Paragraph("<b>Do this first</b>", st["cellb"]),
+             Paragraph("<b>Sources</b>", st["cellb"])]]
+    for h in entries:
+        sev_hex = SEVERITY_HEX.get(h["severity"], "#5B6573")
+        links = "<br/>".join(f'<a href="{_esc(src["url"])}" color="#1E3A5F">{_esc(src["name"])}</a>'
+                             for src in h["sources"])
+        rows.append([
+            Paragraph(format_date(h["date"]), st["cell"]),
+            Paragraph(f'<b>{_esc(h["title"])}</b><br/>'
+                      f'<font color="{sev_hex}"><b>{h["severity"].upper()}</b></font> · '
+                      f'{_esc(brief_text(h))}', st["cell"]),
+            Paragraph(_esc(h["actions"][0]), st["cell"]),
+            Paragraph(links, st["cell"]),
+        ])
+    return _table(rows, [18 * mm, 78 * mm, 54 * mm, 28 * mm], st, zebra=True,
+                  padding=(2.4, 2.4, 3, 3))
+
+
 def _news_watch_table(items: List[Dict], st) -> Table:
     from .collectors.news import classify_news
     rows = [[Paragraph("<b>Date</b>", st["cellb"]),
@@ -1548,8 +1589,9 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
             f"(<font color='{SEVERITY_HEX[h['severity']]}'><b>{h['severity']}</b></font>)"
             for h in headlines[:4])
         n_h = len(headlines)
-        bluf.append(f"<b>{n_h} headline incident{'s' if n_h != 1 else ''} need{'s' if n_h == 1 else ''} "
-                    f"action now:</b> {named}. Details and checklists in section 01.")
+        more = f"; and {n_h - 4} more" if n_h > 4 else ""
+        bluf.append(f"<b>{n_h} headline incident{'s' if n_h != 1 else ''} in section 01.</b> "
+                    f"Act first on: {named}{more}.")
     if scored_sectors:
         top = scored_sectors[0]
         bluf.append(f"<b>{_esc(top['label'])}</b> carries the highest composite risk score "
@@ -1602,8 +1644,21 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
             f"{end_date.strftime('%d %b %Y')} and do not change the sector scores in this report.",
             st["small"]))
         story.append(Spacer(1, 6))
-        for h in headlines:
+        if len(headlines) > 3:
+            story.append(Paragraph("This Month at a Glance", st["h3"]))
+            story.append(_headline_index_table(headlines, st))
+            story.append(Spacer(1, 8))
+        cards, brief = split_headlines(headlines)
+        for h in cards:
             story.append(KeepTogether([_headline_card(h, st), Spacer(1, 7)]))
+        if brief:
+            story.append(Paragraph("More Incidents to Know About", st["h3"]))
+            story.append(Paragraph("Global incidents that reach Indian organisations through shared "
+                                   "software and services. One line each, with the first thing to do.",
+                                   st["small"]))
+            story.append(Spacer(1, 3))
+            story.append(_headline_brief_table(brief, st))
+            story.append(Spacer(1, 7))
         if news_items:
             story.append(KeepTogether([
                 Paragraph("Also in the News (last 14 days)", st["h3"]),
@@ -1785,7 +1840,7 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     priority_for = {"Critical": ("#C0392B", "P1: Critical"), "High": ("#D35400", "P2: High"),
                     "Medium": ("#27AE60", "P3: Medium"), "Low": ("#27AE60", "P3: Medium")}
     headline_rows = []
-    for h in headlines:
+    for h in headlines[:6]:
         colour, label = priority_for[h["severity"]]
         headline_rows.append([
             Paragraph(f"<font color='{colour}'><b>{label}</b></font>", st["cell"]),
