@@ -214,8 +214,8 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
         assert correlation["corroborated_count"] == 10, (
             f"QA FAIL: Expected 10 corroborated signals, got {correlation['corroborated_count']}"
         )
-        assert correlation["shared_artefacts_count"] == 6, (
-            f"QA FAIL: Expected 6 shared artefacts, got {correlation['shared_artefacts_count']}"
+        assert correlation["shared_artefacts_count"] == 5, (
+            f"QA FAIL: Expected 5 shared artefacts, got {correlation['shared_artefacts_count']}"
         )
         print("  [PASS] Multi-Source Cross-Correlation (10 signals across 6 shared artefacts)")
     else:

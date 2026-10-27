@@ -242,6 +242,49 @@ class TestCorrelationEngine(unittest.TestCase):
         self.assertEqual(len(shared), 0)
 
 
+class TestCorrelationGrading(unittest.TestCase):
+    def _sig(self, source, stype=SignalType.MALWARE_INFRA, conf=0.5, **entities):
+        return Signal(signal_type=stype, title=f"{source} record", source=source,
+                      observed_at="2026-10-05T00:00:00Z", confidence=conf,
+                      entities=Entities(**entities))
+
+    def test_matches_are_graded_and_only_independent_ones_uplift(self):
+        kev = self._sig("CISA KEV", SignalType.VULNERABILITY, cves=["CVE-2026-1111"])
+        nvd = self._sig("NVD", SignalType.VULNERABILITY, cves=["cve-2026-1111"])
+        fox = self._sig("abuse.ch ThreatFox", domains=["bad.example.in", "www.evil.example.in"])
+        haus = self._sig("abuse.ch URLhaus", domains=["bad.example.in"])
+        phish = self._sig("OpenPhish", SignalType.PHISHING, domains=["evil.example.in", "bad.example.in"])
+        gang_a = self._sig("ransomware.live", SignalType.VICTIM, actors=["Akira"], organisations=["Alpha Ltd"])
+        gang_b = self._sig("OTX", SignalType.RESEARCH, actors=["akira"])
+        result = correlate([kev, nvd, fox, haus, phish, gang_a, gang_b])
+
+        shared = {r["artefact"]: r for r in result["shared_artefacts"]}
+        self.assertEqual(shared["CVE-2026-1111"]["match"], "exact artefact")
+        self.assertFalse(shared["CVE-2026-1111"]["independent"])     # KEV and NVD share an upstream
+        self.assertTrue(shared["bad.example.in"]["independent"])     # abuse.ch + OpenPhish
+        self.assertTrue(shared["evil.example.in"]["independent"])    # www. stripped before matching
+        self.assertEqual({e["source"] for e in shared["bad.example.in"]["evidence"]},
+                         {"abuse.ch ThreatFox", "abuse.ch URLhaus", "OpenPhish"})
+        self.assertNotIn("akira", shared)
+        self.assertEqual([r["artefact"] for r in result["possible_links"]], ["akira"])
+
+        # Confidence rises once, even though ThreatFox shares two artefacts with OpenPhish
+        self.assertAlmostEqual(fox.confidence, 0.575)
+        self.assertAlmostEqual(kev.confidence, 0.5)
+        self.assertAlmostEqual(gang_a.confidence, 0.5)
+        self.assertIn("cross_source_confirmed", phish.tags)
+        self.assertNotIn("cross_source_confirmed", nvd.tags)
+        self.assertEqual(result["independent_artefacts_count"], 2)
+
+    def test_abuse_ch_feeds_are_one_family(self):
+        fox = self._sig("abuse.ch ThreatFox", domains=["same.example.in"])
+        haus = self._sig("abuse.ch URLhaus", domains=["same.example.in"])
+        result = correlate([fox, haus])
+        self.assertEqual(result["shared_artefacts_count"], 1)
+        self.assertEqual(result["independent_artefacts_count"], 0)
+        self.assertEqual(fox.confidence, 0.5)
+
+
 class TestScoring(unittest.TestCase):
     def test_scoring_multi_zero_cap_guard(self):
         sig = Signal(

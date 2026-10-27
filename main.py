@@ -212,13 +212,15 @@ def cmd_correlate(args):
 
     result = correlate(signals)
     print(f"\n{BOLD}Cross-source correlation - {result['total_signals']} signals{RESET}")
-    print(f"  {GREEN}{result['corroborated_count']} signals corroborated by "
-          f"a second source{RESET}")
+    print(f"  {result['corroborated_count']} signals seen in more than one feed "
+          f"({result['shared_artefacts_count']} artefacts)")
+    print(f"  {GREEN}{result['independently_corroborated_count']} signals independently corroborated "
+          f"({result['independent_artefacts_count']} artefacts from separate feed families){RESET}")
 
     if result["exploit_victim_links"]:
         print(f"\n{CYAN}Exploited CVE meeting live victim activity{RESET}")
-        print(f"{DIM}  A known way in, plus proof it is being used against "
-              f"that sector now.{RESET}")
+        print(f"{DIM}  Co-occurrence in the same sector: a known way in, not proof it was "
+              f"the way in.{RESET}")
         for link in result["exploit_victim_links"][:8]:
             flag = f" {RED}[ransomware campaigns]{RESET}" if link["ransomware_linked"] else ""
             edge = f" {YELLOW}[edge device]{RESET}" if link["edge_device"] else ""
@@ -231,11 +233,18 @@ def cmd_correlate(args):
     if result["shared_artefacts"]:
         print(f"\n{CYAN}Artefacts seen by more than one source{RESET}")
         for item in result["shared_artefacts"][:10]:
-            print(f"  {item['artefact'][:44]:<46} {item['source_count']} sources  "
-                  f"{DIM}{', '.join(item['signal_types'][:3])}{RESET}")
+            indep = f"{GREEN}independent{RESET}" if item["independent"] else f"{DIM}shared upstream{RESET}"
+            evidence = "; ".join(f"{e['source']} {e['observed_at']}" for e in item["evidence"])
+            print(f"  {item['artefact'][:40]:<42} {item['match']:<18} {indep}")
+            print(f"  {DIM}  {evidence[:90]}{RESET}")
+
+    if result["possible_links"]:
+        print(f"\n{CYAN}Possible links (name match only, not counted){RESET}")
+        for item in result["possible_links"][:8]:
+            print(f"  {item['artefact'][:40]:<42} {item['field']:<18} {DIM}{', '.join(item['sources'])}{RESET}")
 
     if result["actor_chains"]:
-        print(f"\n{CYAN}Actors appearing across signal types{RESET}")
+        print(f"\n{CYAN}Actor names appearing across signal types (name match only){RESET}")
         for chain in result["actor_chains"][:8]:
             print(f"  {chain['actor'][:26]:<28} {chain['signal_count']:>3} signals  "
                   f"{DIM}{', '.join(chain['signal_types'][:4])}{RESET}")

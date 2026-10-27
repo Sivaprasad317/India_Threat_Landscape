@@ -723,14 +723,21 @@ def _correlation_summary(correlation: Dict) -> str:
     shared = correlation.get("shared_artefacts", [])
     n_sig = correlation.get("corroborated_count", 0)
     n_art = correlation.get("shared_artefacts_count", len(shared))
-    if not shared:
+    n_ind = correlation.get("independent_artefacts_count", 0)
+    n_weak = correlation.get("possible_links_count", 0)
+    if not shared and not n_weak:
         return "No artefact (CVE, domain, IP, hash or organisation) appeared in more than one feed during the window."
-    by_pair = Counter(" and ".join(item["sources"][:2]) for item in shared)
-    pairs = "; ".join(f"{cnt} via {pair}" for pair, cnt in by_pair.most_common(4))
-    return (f"Cross-source telemetry reconciles <b>{n_sig} signals across {n_art} shared artefacts</b> ({_esc(pairs)}). "
-            "Note on shared-parent feeds: CISA KEV and NVD share upstream CVE data, while ransomware.live and ransomlook.io both "
-            "monitor the same underlying leak sites. Accordingly, no independent confidence uplift is awarded for corroboration "
-            "between shared-parent feeds.")
+    kinds = Counter(item["match"] for item in shared)
+    kind_str = "; ".join(f"{cnt} {kind}" for kind, cnt in kinds.most_common())
+    text = (f"Cross-source telemetry reconciles <b>{n_sig} signals across {n_art} shared artefacts</b>"
+            f"{' (' + _esc(kind_str) + ')' if kind_str else ''}. "
+            f"<b>{n_ind} of {n_art}</b> come from independent feed families; the rest were seen by feeds that share an upstream "
+            "(CISA KEV and NVD share CVE data; ransomware.live and ransomlook.io scrape the same leak sites; the abuse.ch feeds share "
+            "one operator), so they confirm the record exists but not that it is true. Only independent matches raise confidence.")
+    if n_weak:
+        text += (f" {n_weak} further match{'es' if n_weak != 1 else ''} rest only on a shared actor or malware-family name; "
+                 "these are listed as possible links and not counted.")
+    return text
 
 
 def _actor_activity(signals: List[Signal]) -> Dict[str, Dict]:
@@ -1614,7 +1621,8 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         _kpi("Sources", len(sources), "#1E3A5F"),
         _kpi("Extortion Postings", total_postings, "#9B1C1C", f"({kpi_org_str})"),
         _kpi("Actively Exploited (KEV)", cisa_kev_count, "#C2410C", f"({all_cves_count} Distinct CVEs Monitored)"),
-        _kpi("Seen in multiple feeds", seen_multiple_count, "#2F855A", f"({seen_artefacts_count} Artefacts)"),
+        _kpi("Seen in multiple feeds", seen_multiple_count, "#2F855A",
+             f"({seen_artefacts_count} Artefacts, {correlation.get('independent_artefacts_count', 0)} Independent)"),
         _kpi("High+ Sectors", critical_sectors, "#9B1C1C", f"({crit_labels})"),
     ]]
     story.append(_kpi_table(kpi_cards, [29.6 * mm] * 6))
@@ -2258,24 +2266,50 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     shared = correlation.get("shared_artefacts", [])
     if shared:
         story.append(Paragraph("Artefacts Seen Across Multiple Feeds", st["h3"]))
-        rows = [[Paragraph("<b>Artefact Identifier</b>", st["cellb"]),
-                 Paragraph("<b>Sources</b>", st["cellb"]),
-                 Paragraph("<b>Signal Classifications</b>", st["cellb"]),
-                 Paragraph("<b>Assessed Severity</b>", st["cellb"])]]
-        for item in shared[:6]:
-            if any(st_t in ("victim", "data_leak") for st_t in item.get("signal_types", [])):
+        story.append(Paragraph(
+            "Each row shows how the feeds matched and the first record from each feed. Exact artefact = the same CVE, hash, "
+            "domain, IP or URL; same organisation = the same named organisation after name normalisation.",
+            st["small"]))
+        rows = [[Paragraph("<b>Artefact</b>", st["cellb"]),
+                 Paragraph("<b>Match</b>", st["cellb"]),
+                 Paragraph("<b>Independent?</b>", st["cellb"]),
+                 Paragraph("<b>Evidence (first record per feed)</b>", st["cellb"])]]
+        for item in shared[:8]:
+            if item["strength"] == "organisation":
                 sec_lbl = sector_label(item["sectors"][0]) if item.get("sectors") else "Corporate"
-                disp_art = f"{sec_lbl} entity (corroborated)"
+                disp_art = f"{sec_lbl} entity (named victim)"
             else:
                 disp_art = item["artefact"]
+            evidence = "<br/>".join(f"{_esc(e['source'])}: {_esc(e['observed_at'])}" for e in item["evidence"])
+            indep = ("<font color='#2F855A'><b>Yes</b></font>" if item["independent"]
+                     else f"No, shared upstream ({_esc(', '.join(item['families']))})")
             rows.append([
                 Paragraph(_esc(disp_art)[:55], st["mono"]),
-                Paragraph(_esc(", ".join(item["sources"][:3])), st["cell"]),
-                Paragraph(_esc(", ".join(item["signal_types"][:3])), st["cell"]),
-                Paragraph(_esc(item["max_severity"]), st["cellc"]),
+                Paragraph(_esc(item["match"]), st["cell"]),
+                Paragraph(indep, st["cell"]),
+                Paragraph(evidence, st["cell"]),
             ])
-        story.append(_table(rows, [64*mm, 48*mm, 44*mm, 22*mm], st, zebra=True,
+        story.append(_table(rows, [52*mm, 28*mm, 46*mm, 52*mm], st, zebra=True,
                             padding=(1.8, 1.8, 3, 3)))
+        story.append(Spacer(1, 4))
+
+    possible = correlation.get("possible_links", [])
+    if possible:
+        story.append(Paragraph("Possible Links (Name Match Only, Not Counted)", st["h3"]))
+        rows = [[Paragraph("<b>Name</b>", st["cellb"]),
+                 Paragraph("<b>Kind</b>", st["cellb"]),
+                 Paragraph("<b>Feeds</b>", st["cellb"]),
+                 Paragraph("<b>Why it is not counted</b>", st["cellb"])]]
+        for item in possible[:5]:
+            kind = "threat actor" if item["field"] == "actors" else "malware family"
+            rows.append([
+                Paragraph(_esc(_normalize_actor(item["artefact"]) if item["field"] == "actors" else item["artefact"]), st["cell"]),
+                Paragraph(kind, st["cell"]),
+                Paragraph(_esc(", ".join(item["sources"])), st["cell"]),
+                Paragraph("A shared name alone does not show a common campaign; groups rebrand, share names and are spelled "
+                          "differently across feeds.", st["cell"]),
+            ])
+        story.append(_table(rows, [36*mm, 26*mm, 46*mm, 70*mm], st, zebra=True, padding=(1.8, 1.8, 3, 3)))
 
     # =========================================================================
     # PAGE 8: Priority Intelligence Signals & Tactical Ingress Telemetry
