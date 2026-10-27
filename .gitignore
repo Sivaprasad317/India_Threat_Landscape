@@ -1,0 +1,23 @@
+# Environment variables and API keys
+.env
+*.env
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Scratch & temporary testing files
+scratch/
+test_tmp.pdf
+*.tmp
+
+# Local cache (exclude generated runtime maps, keep seed database and gitkeep)
+cache/*
+!cache/.gitkeep
+!cache/india_threats.db
+
+# Generated build deliverables
+output/

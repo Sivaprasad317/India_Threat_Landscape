@@ -1,0 +1,237 @@
+{
+  "timestamp": "2026-10-11 12:45 IST",
+  "scores": {
+    "EDUCATION": 60.8,
+    "BFSI": 54.4,
+    "RETAIL_ECOM": 51.0,
+    "MANUFACTURING": 50.8,
+    "IT_ITES": 47.8,
+    "GOVERNMENT": 47.2,
+    "TELECOM": 34.2,
+    "ENERGY": 30.7,
+    "TRANSPORT": 23.5,
+    "HEALTHCARE": 23.2,
+    "PHARMA": 16.9,
+    "REAL_ESTATE": 12.6,
+    "MEDIA": 9.3,
+    "NGO_LEGAL": 7.9
+  },
+  "bands": {
+    "EDUCATION": "High",
+    "BFSI": "Moderate",
+    "RETAIL_ECOM": "Moderate",
+    "MANUFACTURING": "Moderate",
+    "IT_ITES": "Moderate",
+    "GOVERNMENT": "Moderate",
+    "TELECOM": "Low",
+    "ENERGY": "Low",
+    "TRANSPORT": "Low",
+    "HEALTHCARE": "Low",
+    "PHARMA": "Minimal",
+    "REAL_ESTATE": "Minimal",
+    "MEDIA": "Minimal",
+    "NGO_LEGAL": "Minimal"
+  },
+  "components": {
+    "EDUCATION": {
+      "impact": 100.0,
+      "exploit": 78.5,
+      "infra": 35.2,
+      "pressure": 53.4,
+      "exposure": 0.0,
+      "criticality": 30.0
+    },
+    "BFSI": {
+      "impact": 0.0,
+      "exploit": 93.6,
+      "infra": 34.5,
+      "pressure": 100.0,
+      "exposure": 54.7,
+      "criticality": 100.0
+    },
+    "RETAIL_ECOM": {
+      "impact": 46.9,
+      "exploit": 40.5,
+      "infra": 78.6,
+      "pressure": 100.0,
+      "exposure": 25.9,
+      "criticality": 30.0
+    },
+    "MANUFACTURING": {
+      "impact": 73.5,
+      "exploit": 0.0,
+      "infra": 77.1,
+      "pressure": 53.4,
+      "exposure": 73.3,
+      "criticality": 30.0
+    },
+    "IT_ITES": {
+      "impact": 0.0,
+      "exploit": 64.8,
+      "infra": 100.0,
+      "pressure": 53.4,
+      "exposure": 100.0,
+      "criticality": 30.0
+    },
+    "GOVERNMENT": {
+      "impact": 0.0,
+      "exploit": 100.0,
+      "infra": 18.7,
+      "pressure": 53.4,
+      "exposure": 41.0,
+      "criticality": 100.0
+    },
+    "TELECOM": {
+      "impact": 0.0,
+      "exploit": 45.9,
+      "infra": 0.0,
+      "pressure": 100.0,
+      "exposure": 0.0,
+      "criticality": 100.0
+    },
+    "ENERGY": {
+      "impact": 0.0,
+      "exploit": 0.0,
+      "infra": 16.1,
+      "pressure": 53.4,
+      "exposure": 79.0,
+      "criticality": 100.0
+    },
+    "TRANSPORT": {
+      "impact": 0.0,
+      "exploit": 0.0,
+      "infra": 20.8,
+      "pressure": 53.4,
+      "exposure": 0.0,
+      "criticality": 100.0
+    },
+    "HEALTHCARE": {
+      "impact": 0.0,
+      "exploit": 30.5,
+      "infra": 20.9,
+      "pressure": 53.4,
+      "exposure": 41.0,
+      "criticality": 30.0
+    },
+    "PHARMA": {
+      "impact": 0.0,
+      "exploit": 11.7,
+      "infra": 31.6,
+      "pressure": 53.4,
+      "exposure": 0.0,
+      "criticality": 30.0
+    },
+    "REAL_ESTATE": {
+      "impact": 0.0,
+      "exploit": 0.0,
+      "infra": 36.7,
+      "pressure": 0.0,
+      "exposure": 25.9,
+      "criticality": 30.0
+    },
+    "MEDIA": {
+      "impact": 0.0,
+      "exploit": 0.0,
+      "infra": 31.7,
+      "pressure": 0.0,
+      "exposure": 0.0,
+      "criticality": 30.0
+    },
+    "NGO_LEGAL": {
+      "impact": 0.0,
+      "exploit": 0.0,
+      "infra": 22.9,
+      "pressure": 0.0,
+      "exposure": 0.0,
+      "criticality": 30.0
+    }
+  },
+  "sector_counts": {
+    "EDUCATION": {
+      "victims": 4,
+      "cves": 10,
+      "infra": 2
+    },
+    "BFSI": {
+      "victims": 0,
+      "cves": 11,
+      "infra": 2
+    },
+    "RETAIL_ECOM": {
+      "victims": 1,
+      "cves": 4,
+      "infra": 6
+    },
+    "MANUFACTURING": {
+      "victims": 2,
+      "cves": 0,
+      "infra": 6
+    },
+    "IT_ITES": {
+      "victims": 0,
+      "cves": 5,
+      "infra": 8
+    },
+    "GOVERNMENT": {
+      "victims": 0,
+      "cves": 13,
+      "infra": 1
+    },
+    "TELECOM": {
+      "victims": 0,
+      "cves": 3,
+      "infra": 0
+    },
+    "ENERGY": {
+      "victims": 0,
+      "cves": 0,
+      "infra": 1
+    },
+    "TRANSPORT": {
+      "victims": 0,
+      "cves": 0,
+      "infra": 1
+    },
+    "HEALTHCARE": {
+      "victims": 0,
+      "cves": 2,
+      "infra": 1
+    },
+    "PHARMA": {
+      "victims": 0,
+      "cves": 1,
+      "infra": 2
+    },
+    "REAL_ESTATE": {
+      "victims": 0,
+      "cves": 0,
+      "infra": 2
+    },
+    "MEDIA": {
+      "victims": 0,
+      "cves": 0,
+      "infra": 2
+    },
+    "NGO_LEGAL": {
+      "victims": 0,
+      "cves": 0,
+      "infra": 1
+    }
+  },
+  "iocs": {
+    "total_indicators": 49,
+    "unique_hosts": 43,
+    "compromised_hosts": 18,
+    "unverified_hosts": 25,
+    "phishing_hosts": 0
+  },
+  "priority_victims": [
+    "Majestic Holidays India Private Limited",
+    "Manipal Academy of Higher Education",
+    "IIT Roorkee",
+    "Simplex Engineering Works Pvt. Ltd."
+  ],
+  "total_signals": 110,
+  "unique_victims": 4,
+  "total_postings": 7
+}
