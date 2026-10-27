@@ -65,6 +65,11 @@ python main.py stats
 
 Run `collect` daily, `bulletin` weekly.
 
+Each `bulletin` run writes exactly two files to `output/<Mon>/<MM-DD-YYYY>/`:
+the bulletin PDF and its IOC sheet (CSV, opens in Excel). `--public` gives the
+TLP:CLEAR versions of both instead. The 1-page brief is only made when you
+run `pulse` yourself.
+
 ### Scoring window
 
 Scoring is anchored to a fixed window end date so repeated runs give
