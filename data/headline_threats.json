@@ -1,0 +1,92 @@
+[
+  {
+    "id": "php2shell",
+    "title": "PHP2Shell: unauthenticated remote code execution in the PHP engine",
+    "category": "Critical vulnerability",
+    "severity": "Critical",
+    "date": "2026-10-21",
+    "status": "Patched 21 Oct 2026. Exploitation attempts observed in the wild",
+    "india_link": "Broad: PHP runs a large share of Indian government, university, e-commerce and SME websites",
+    "sectors": ["GOVERNMENT", "EDUCATION", "RETAIL_ECOM", "BFSI", "IT_ITES"],
+    "cves": ["CVE-2026-109618", "CVE-2026-109619"],
+    "keywords": ["PHP2Shell"],
+    "scope": "Websites and PHP servers",
+    "owner": "Web / Infra teams",
+    "summary": "Two flaws in PHP core allow unauthenticated remote code execution: CVE-2026-109618 (memory corruption during request start-up) and CVE-2026-109619 (use-after-free). PHP rates both 9.2 on CVSS v4.0. The bugs are in the interpreter itself, so exposure does not depend on the CMS or framework: PHP-FPM, Apache mod_php, php-cgi, FrankenPHP and LiteSpeed deployments are all in scope. Amazon reported an exploitation attempt against its honeypots on 17 Oct, four days before patches shipped, and Cloudflare counted millions of attempts by 22 Oct. Successful real-world compromise was still unverified as of 23 Oct.",
+    "india_impact": "Government (.gov.in, .nic.in), university and small-business portals often run on shared hosting with older PHP branches. PHP 8.1 and older get no official fix, so legacy portals are the most exposed. A defaced or web-shelled portal is reportable to CERT-In within 6 hours under the 2022 Directions.",
+    "actions": [
+      "Upgrade to PHP 8.5.12, 8.4.27, 8.3.36 or 8.2.35 and restart every PHP worker (FPM pools, Apache, LiteSpeed).",
+      "PHP 8.1 and older have no official fix: apply a distribution backport, upgrade, or take the service offline until patched.",
+      "Get written patch confirmation from hosting providers and website vendors.",
+      "Hunt for web shells and unexpected child processes of PHP workers from 17 Oct onwards."
+    ],
+    "indicators": [],
+    "sources": [
+      {"name": "Recorded Future", "url": "https://www.recordedfuture.com/blog/php2shell-vulnerability-exploitation"},
+      {"name": "BleepingComputer", "url": "https://bleepingcomputer.com/news/security/amazon-says-php2shell-exploitation-began-4-days-before-patches"},
+      {"name": "Security Affairs", "url": "https://securityaffairs.com/?p=201538"},
+      {"name": "Tanium", "url": "https://www.tanium.com/blog/php2shell-responding-to-cve-2026-109618-and-cve-2026-109619"}
+    ]
+  },
+  {
+    "id": "litellm-2026-10",
+    "title": "LiteLLM supply-chain attack: credential-stealing release on PyPI and Docker",
+    "category": "Software supply chain",
+    "severity": "Critical",
+    "date": "2026-10-21",
+    "status": "Malicious release removed. Anyone who installed it must rotate credentials",
+    "india_link": "Broad: LiteLLM is a common gateway for LLM APIs in IT services, GCC and AI start-up environments",
+    "sectors": ["IT_ITES"],
+    "cves": [],
+    "keywords": ["LiteLLM"],
+    "scope": "CI/CD, developer machines, containers",
+    "owner": "DevOps / AppSec",
+    "summary": "On 21 Oct 2026 attackers published litellm 1.107.0 to PyPI and to the official Docker images (tags v1.107.0, latest, main-latest, main-stable). It was live for about two hours (11:39 to 13:20 UTC on PyPI). The release drops cook.pth, cook.py and sitecustomize.py into site-packages; these run every time Python starts, even if LiteLLM is never imported. They steal cloud, Kubernetes, Vault, SSH, Git, npm/PyPI and AI-tool credentials, .env files and browser data, and add a backdoor that polls for remote code. Per LiteLLM's analysis the attackers used stolen GitHub CLI OAuth tokens from three engineers to run the release workflow against a look-alike fork. This is the second LiteLLM compromise this year (1.82.7 and 1.82.8 in March, attributed to TeamPCP); no link between the two has been established.",
+    "india_impact": "Indian IT services firms, GCCs and AI start-ups that build on LLM APIs are the likely exposure. Any CI runner, developer laptop or container that pulled 1.107.0 or the :latest image during the window should be treated as compromised. The stolen keys typically reach cloud accounts and client environments, which turns one infected build server into a supplier-side breach.",
+    "actions": [
+      "Search lockfiles, CI logs, container registries and pip caches for litellm 1.107.0 and for images pulled by the latest or main-* tags on 21 Oct.",
+      "On affected hosts delete cook.pth, cook.py and sitecustomize.py from site-packages (uninstalling the package does not remove them), then pin litellm 1.106.2 or rebuild from clean.",
+      "From a clean machine rotate every credential the host could reach (cloud, Kubernetes, Vault, SSH, Git, PyPI/npm tokens, LLM API keys) and review their use since 21 Oct.",
+      "Block litellm[.]dev. Pin dependencies by hash and restrict release workflows to approved repositories."
+    ],
+    "indicators": [
+      "litellm[.]dev (exfiltration domain)",
+      "cook.pth, cook.py, sitecustomize.py in site-packages",
+      "/tmp/.pc_once_72129118c59f5636c0bb",
+      "/tmp/remote_code_loader.lock"
+    ],
+    "sources": [
+      {"name": "Datadog Security Labs", "url": "https://securitylabs.datadoghq.com/articles/litellm-compromised-pypi-docker/"},
+      {"name": "Datadog Security Labs (March incident)", "url": "https://securitylabs.datadoghq.com/articles/litellm-compromised-pypi-teampcp-supply-chain-campaign/"}
+    ]
+  },
+  {
+    "id": "sbi-2026-10",
+    "title": "SBI customer records on the dark web: 3,897 records confirmed",
+    "category": "Data breach",
+    "severity": "High",
+    "date": "2026-10-21",
+    "status": "Under investigation. Source of the exposure not yet identified",
+    "india_link": "Direct: India's largest public-sector bank",
+    "sectors": ["BFSI"],
+    "cves": [],
+    "keywords": ["SBI", "State Bank of India"],
+    "scope": "Customer channels and fraud controls",
+    "owner": "Fraud / SOC",
+    "summary": "State Bank of India told the stock exchanges on 21 Oct 2026 that a preliminary review of about 3.75 lakh records circulating on the dark web found 3,897 SBI customer records with personal information: names, mobile numbers, dates of birth, addresses, CIF numbers and loan details. A group calling itself Siriusim had claimed on BreachForums to hold 3.75 lakh records and 2,722 PDF documents; SBI's filing does not name the group and the document claim is unverified. SBI says banking operations and customer funds are unaffected and has engaged a CERT-In-empanelled agency to investigate.",
+    "india_impact": "CIF numbers and loan details make bank-impersonation calls, SMS and WhatsApp messages far more convincing. Expect SBI-themed phishing, fake KYC-update and loan-related fraud aimed at customers, and new SBI lookalike domains. Other banks and NBFCs should expect the same playbook against their own customers.",
+    "actions": [
+      "Banks and NBFCs: brief contact-centre and fraud teams; add friction to SIM-swap, mobile-number change and device re-binding requests.",
+      "Watch for new SBI lookalike domains and SMS sender IDs (the crt.sh and OpenPhish collectors already monitor SBI brands).",
+      "Remind staff and customers that the bank never asks for OTP, PIN or passwords.",
+      "Ask vendors that handle customer data (call centres, loan processors, collection agencies) to confirm they are not the source."
+    ],
+    "indicators": [],
+    "sources": [
+      {"name": "CRN Asia", "url": "https://www.crnasia.com/india/news/2026/india-s-largest-public-sector-bank-sbi-probes-data-loss-after-3-897-customer-records-surface-on-dark-web"},
+      {"name": "DT Next / IANS", "url": "https://www.dtnext.in/news/business/sbi-data-breach-psu-bank-confirms-3897-customer-records-exposed-on-dark-web"},
+      {"name": "Free Press Journal", "url": "https://www.freepressjournal.in/tech/who-is-siriusim-the-little-known-hacker-group-allegedly-behind-the-sbi-data-leak"},
+      {"name": "Internet Freedom Foundation", "url": "https://internetfreedom.in/sbi-told-investors-its-data-breach-doesnt-matter-what-about-the-3-897-customers-it-affected/"}
+    ]
+  }
+]

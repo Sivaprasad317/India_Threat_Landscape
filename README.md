@@ -19,8 +19,8 @@ python main.py sources
 
 `sources` shows which collectors can run now and which need a key.
 
-**Nine collectors work with no key at all.** Get the free abuse.ch and OTX
-keys and you are at thirteen; Shodan (paid) makes fourteen.
+**Ten collectors work with no key at all.** Get the free abuse.ch and OTX
+keys and you are at fourteen; Shodan (paid) makes fifteen.
 
 ---
 
@@ -37,6 +37,7 @@ keys and you are at thirteen; Shodan (paid) makes fourteen.
 | `certin_advisories` | Official CERT-In vulnerability notes | none |
 | `hacktivism` | Hacktivist claims against Indian targets | none |
 | `leak_tracker` | Your dark web forum observations | none |
+| `security_news` | Security news headlines naming India or high-impact events | none |
 | `threatfox` | Malware C2 on Indian infrastructure | abuse.ch (free) |
 | `urlhaus` | Payload URLs on Indian hosts | abuse.ch (free) |
 | `malwarebazaar` | Samples from India-targeting families | abuse.ch (free) |
@@ -64,6 +65,17 @@ python main.py stats
 ```
 
 Run `collect` daily, `bulletin` weekly.
+
+### What the bulletin contains
+
+| Section | What it covers |
+|---|---|
+| Cover | Key numbers, a "Bottom line" summary, sector risk chart, contents |
+| 01 Threats in Focus | Headline incidents (e.g. PHP2Shell, LiteLLM, SBI leak): what happened, why it matters for India, what to do, sources; plus recent news |
+| 02 Executive Summary | Analytical judgements and a 7-day action plan (headline actions first) |
+| 03-09 | Regional hotspots, adversaries, sector scores, sector detail, correlation, priority signals, extortion telemetry |
+| 10 | CERT-In Directions mapping (internal) or hardening guidance (public) |
+| 11 | Methodology, confidence scale, provenance |
 
 Each `bulletin` run writes exactly two files to `output/<Mon>/<MM-DD-YYYY>/`:
 the bulletin PDF and its IOC sheet (CSV, opens in Excel). `--public` gives the
@@ -152,6 +164,46 @@ reliability figure reflecting how often past claims held up. Unverified
 claims score low by design, because most are recycled or inflated. The value
 is being able to tell a client "this group named you, here is their track
 record", not repeating the claim.
+
+---
+
+## Threats in Focus: covering the incidents everyone is asking about
+
+Feeds only score what they can see. Big incidents such as a PHP engine RCE, a
+poisoned PyPI package or a bank confirming leaked customer records reach
+people through the news first. The bulletin covers them in section 01 from two
+inputs:
+
+**`data/headline_threats.json`**: one entry per incident, written by you from
+public reporting. Entries dated between the window start and the day you run
+the bulletin are shown, most severe first, and their first action is added to
+the 7-day action plan.
+
+```json
+{"id": "php2shell", "title": "PHP2Shell: unauthenticated RCE in the PHP engine",
+ "category": "Critical vulnerability", "severity": "Critical",
+ "date": "2026-10-21", "status": "Patched; exploitation attempts observed",
+ "india_link": "Broad: PHP runs many Indian government and SME sites",
+ "sectors": ["GOVERNMENT", "EDUCATION"], "cves": ["CVE-2026-109618"],
+ "keywords": ["PHP2Shell"], "scope": "Websites and PHP servers",
+ "owner": "Web / Infra teams",
+ "summary": "What happened...", "india_impact": "Why it matters...",
+ "actions": ["First thing to do...", "..."], "indicators": [],
+ "sources": [{"name": "Recorded Future", "url": "https://..."}]}
+```
+
+`severity` is Critical, High, Medium or Low. `keywords` stop the same story
+being repeated in the news list. Entries with missing fields are skipped with a
+warning.
+
+**`security_news` collector**: reads RSS feeds (The Hacker News,
+BleepingComputer, SecurityWeek, The Record, MediaNama) during `collect` and
+keeps stories that name India or describe exploited flaws, supply-chain
+attacks, breaches or ransomware. The last 14 days appear under "Also in the
+News". Use this list to decide what deserves a headline entry. Change the feeds
+with `NEWS_FEEDS="Name|https://url,Name|https://url"` in `.env`.
+
+Neither input changes sector scores: headlines are analysis, not telemetry.
 
 ---
 

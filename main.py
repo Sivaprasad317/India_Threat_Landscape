@@ -29,13 +29,14 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from core import database as db
-from core.certin import (DISCLAIMER, log_retention_floor, map_to_annexure,
-                         obligations_summary, reporting_deadline)
-from core.sectors import SECTORS, sector_label
-from core.signals import Signal
-
+# Before the core imports: core.window reads SCORING_ANCHOR at import time
 load_dotenv()
+
+from core import database as db  # noqa: E402
+from core.certin import (DISCLAIMER, log_retention_floor, map_to_annexure,  # noqa: E402
+                         obligations_summary, reporting_deadline)
+from core.sectors import SECTORS, sector_label  # noqa: E402
+from core.signals import Signal  # noqa: E402
 
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
     try:
@@ -135,9 +136,16 @@ def cmd_collect(args):
 
         new = sum(1 for s in signals if db.upsert_signal(s))
         total_new += new; total_seen += len(signals)
-        colour = GREEN if signals else DIM
-        print(f"  {colour}ok     {name:<22} {len(signals):>4} signals, "
-              f"{new:>4} new{RESET}")
+        news = getattr(collector, "items", None)
+        if news is not None:
+            fresh = sum(1 for item in news if db.upsert_intel_item(item))
+            colour = GREEN if news else DIM
+            print(f"  {colour}ok     {name:<22} {len(news):>4} stories, "
+                  f"{fresh:>4} new{RESET}")
+        else:
+            colour = GREEN if signals else DIM
+            print(f"  {colour}ok     {name:<22} {len(signals):>4} signals, "
+                  f"{new:>4} new{RESET}")
         for err in collector.errors[:2]:
             print(f"         {YELLOW}{err[:86]}{RESET}")
         db.record_run(name, started, datetime.now(timezone.utc).isoformat(),
@@ -245,6 +253,11 @@ def cmd_bulletin(args):
     correlation = correlate(signals)
     scored = rank_sectors_multi(signals)
     by_source = db.signal_counts_by_source(days=args.days)
+
+    from core.window import window_end_date
+    if db.latest_signal_date() > window_end_date().isoformat():
+        print(f"\n{YELLOW}Note: the database has signals newer than the scoring window end "
+              f"({window_end_date():%d %b %Y}). Set SCORING_ANCHOR=now in .env to include them.{RESET}")
 
     ist = timezone(timedelta(hours=5, minutes=30))
     now_ist = datetime.now(ist)

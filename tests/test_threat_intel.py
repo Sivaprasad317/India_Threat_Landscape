@@ -61,6 +61,32 @@ class TestDatabaseAndSignals(unittest.TestCase):
         self.assertEqual(len(signals), 1)
         self.assertEqual(signals[0]["title"], "Test Victim Incident")
 
+    def test_get_signals_excludes_signals_after_window_end(self):
+        later = Signal(
+            signal_type=SignalType.VICTIM,
+            title="After Window Incident",
+            source="Test Feed",
+            observed_at="2026-10-20T10:00:00Z",
+            india_relevance=1.0,
+        )
+        db.upsert_signal(later, db_path=self.db_path)
+        in_window = db.get_signals(days=30, db_path=self.db_path,
+                                   end_date=datetime(2026, 10, 11))
+        self.assertEqual(in_window, [])
+        moved = db.get_signals(days=30, db_path=self.db_path,
+                               end_date=datetime(2026, 10, 27))
+        self.assertEqual([r["title"] for r in moved], ["After Window Incident"])
+
+    def test_intel_items_upsert_and_window(self):
+        item = {"title": "PHP2Shell exploited", "url": "https://news.test/1",
+                "source": "Test News", "published_at": "2026-10-22T10:00:00+00:00",
+                "india_relevant": False, "india_reason": "", "summary": ""}
+        self.assertTrue(db.upsert_intel_item(item, db_path=self.db_path))
+        self.assertFalse(db.upsert_intel_item(item, db_path=self.db_path))
+        rows = db.get_intel_items("2026-10-20", "2026-10-28", db_path=self.db_path)
+        self.assertEqual([r["title"] for r in rows], ["PHP2Shell exploited"])
+        self.assertEqual(db.get_intel_items("2026-10-23", "2026-10-28", db_path=self.db_path), [])
+
     def test_signal_serialization_and_id(self):
         sig = Signal(
             signal_type=SignalType.VULNERABILITY,
@@ -380,7 +406,7 @@ class TestBulletinQA(unittest.TestCase):
 
             # Check PDF text layers
             doc = pymupdf.open(pdf_path)
-            self.assertEqual(len(doc), 11)
+            self.assertGreaterEqual(len(doc), 11)
             full_text = "".join(page.get_text() for page in doc)
             doc.close()
             self.assertIn("TLP:CLEAR", full_text)
@@ -411,6 +437,157 @@ class TestBulletinQA(unittest.TestCase):
             self.assertIn("TLP:CLEAR", text)
             self.assertIn("Top 3 Strategic Findings", text)
             self.assertIn("PRIORITY DEFENSIVE ACTION", text)
+
+
+class TestHeadlineThreats(unittest.TestCase):
+    def _entry(self, **overrides):
+        entry = {
+            "id": "t1", "title": "Test incident: detail", "category": "Data breach",
+            "severity": "High", "date": "2026-10-21", "summary": "What happened.",
+            "actions": ["Do the thing."],
+            "sources": [{"name": "Test", "url": "https://news.test/1"}],
+        }
+        entry.update(overrides)
+        return entry
+
+    def test_bundled_headlines_are_valid(self):
+        from core.headlines import DEFAULT_PATH, validate_headline
+        import json
+        with open(DEFAULT_PATH, encoding="utf-8") as f:
+            entries = json.load(f)
+        self.assertGreaterEqual(len(entries), 3)
+        for e in entries:
+            self.assertEqual(validate_headline(e), [], e.get("id"))
+
+    def test_validation_flags_problems(self):
+        from core.headlines import validate_headline
+        self.assertEqual(validate_headline(self._entry()), [])
+        bad = self._entry(severity="Severe", date="21/10/2026", sources=[{"name": "x"}])
+        del bad["actions"]
+        problems = " ".join(validate_headline(bad))
+        for needle in ("actions", "severity", "date", "source"):
+            self.assertIn(needle, problems)
+
+    def test_load_filters_by_date_and_sorts_by_severity(self):
+        import json
+        from datetime import date
+        from core.headlines import load_headline_threats
+        entries = [
+            self._entry(id="old", date="2026-08-01"),
+            self._entry(id="high", severity="High", date="2026-10-22"),
+            self._entry(id="crit", severity="Critical", date="2026-10-20"),
+            self._entry(id="broken", severity="Nope"),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "h.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(entries, f)
+            loaded = load_headline_threats(path, start=date(2026, 9, 1),
+                                           end=date(2026, 10, 27))
+        self.assertEqual([e["id"] for e in loaded], ["crit", "high"])
+
+    def test_news_watch_drops_covered_stories(self):
+        from core.headlines import headline_keywords, news_watch
+        terms = headline_keywords([self._entry(keywords=["SBI"], cves=["CVE-2026-1"])])
+        items = [
+            {"title": "SBI leak update", "published_at": "2026-10-23", "india_relevant": 1},
+            {"title": "Flaw CVE-2026-1 exploited", "published_at": "2026-10-23"},
+            {"title": "Ransomware hits Mumbai firm", "published_at": "2026-10-22", "india_relevant": 1},
+            {"title": "Global botnet takedown", "published_at": "2026-10-24", "india_relevant": 0},
+            {"title": "Lesbian rights group site defaced", "published_at": "2026-10-21"},
+        ]
+        titles = [i["title"] for i in news_watch(items, terms)]
+        self.assertEqual(titles[0], "Ransomware hits Mumbai firm")
+        self.assertNotIn("SBI leak update", titles)
+        self.assertNotIn("Flaw CVE-2026-1 exploited", titles)
+        self.assertIn("Lesbian rights group site defaced", titles)
+
+
+class TestSecurityNews(unittest.TestCase):
+    RSS = """<rss><channel>
+      <item><title>PHP2Shell flaws actively exploited</title><link>https://n.test/1</link>
+        <pubDate>Thu, 22 Oct 2026 10:00:00 +0000</pubDate>
+        <description>&lt;p&gt;Two critical bugs&lt;/p&gt;</description></item>
+      <item><title>No link here</title></item>
+    </channel></rss>"""
+    ATOM = """<feed xmlns="http://www.w3.org/2005/Atom"><entry>
+      <title>Malicious PyPI release steals keys</title><link href="https://n.test/2"/>
+      <published>2026-10-21T12:00:00Z</published></entry></feed>"""
+
+    def test_parse_rss_and_atom(self):
+        from core.collectors.news import parse_feed
+        rss = parse_feed(self.RSS, "RSS")
+        self.assertEqual(len(rss), 1)
+        self.assertEqual(rss[0]["url"], "https://n.test/1")
+        self.assertEqual(rss[0]["summary"], "Two critical bugs")
+        self.assertTrue(rss[0]["published_at"].startswith("2026-10-22T10:00"))
+        atom = parse_feed(self.ATOM, "Atom")
+        self.assertEqual(atom[0]["url"], "https://n.test/2")
+        self.assertEqual(parse_feed("not xml", "x"), [])
+
+    def test_classify_news(self):
+        from core.collectors.news import classify_news
+        sbi = classify_news("SBI confirms customer data on dark web")
+        self.assertTrue(sbi["india_relevant"])
+        self.assertEqual(sbi["category"], "Data breach")
+        self.assertEqual(classify_news("Malicious PyPI release steals keys")["category"], "Supply chain")
+        php = classify_news("PHP2Shell flaws actively exploited in the wild")
+        self.assertEqual(php["category"], "Vulnerability")
+        self.assertEqual(php["score"], 2)
+        self.assertEqual(classify_news("Company launches new laptop")["score"], 0)
+
+
+class TestBulletinThreatsInFocus(unittest.TestCase):
+    def test_headlines_render_in_bulletin(self):
+        import pymupdf
+        from core.bulletin_multi import build_multi_bulletin
+        # 60 days reuses the tracked snapshot instead of writing a new one
+        sigs = [Signal.from_row(r) for r in db.get_signals(days=60)]
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pdf_path = os.path.join(tmp_dir, "b.pdf")
+            build_multi_bulletin(
+                output_path=pdf_path, scored_sectors=rank_sectors_multi(sigs), signals=sigs,
+                correlation=correlate(sigs), source_summary=db.signal_counts_by_source(days=60),
+                window_days=60)
+            doc = pymupdf.open(pdf_path)
+            pages = [" ".join(p.get_text().split()) for p in doc]
+            doc.close()
+        self.assertIn("In this report", pages[0])
+        self.assertIn("Bottom line", pages[0])
+        self.assertIn("01 Threats in Focus", pages[1])
+        full = " ".join(pages)
+        for title in ("PHP2Shell: unauthenticated remote code execution in the PHP engine",
+                      "LiteLLM supply-chain attack",
+                      "SBI customer records on the dark web"):
+            self.assertIn(title, full)
+        # Headline actions lead the action matrix
+        self.assertIn("PHP2Shell: Upgrade to PHP 8.5.12", full)
+
+    def test_news_watch_renders_uncovered_stories(self):
+        from unittest import mock
+        import pymupdf
+        import core.bulletin_multi as bm
+        now = datetime.now(timezone.utc).isoformat()
+        items = [
+            {"title": "SBI customers hit by fake KYC SMS wave", "url": "https://n.test/a",
+             "source": "MediaNama", "published_at": now, "india_relevant": 1, "summary": ""},
+            {"title": "Ransomware gang claims attack on Pune manufacturer", "url": "https://n.test/b",
+             "source": "The Record", "published_at": now, "india_relevant": 1, "summary": ""},
+        ]
+        sigs = [Signal.from_row(r) for r in db.get_signals(days=60)]
+        with tempfile.TemporaryDirectory() as tmp_dir, \
+                mock.patch.object(bm, "get_intel_items", return_value=items):
+            pdf_path = os.path.join(tmp_dir, "b.pdf")
+            bm.build_multi_bulletin(
+                output_path=pdf_path, scored_sectors=rank_sectors_multi(sigs), signals=sigs,
+                correlation=correlate(sigs), source_summary=db.signal_counts_by_source(days=60),
+                window_days=60)
+            doc = pymupdf.open(pdf_path)
+            full = " ".join(" ".join(p.get_text().split()) for p in doc)
+            doc.close()
+        self.assertIn("Also in the News", full)
+        self.assertIn("Ransomware gang claims attack on Pune manufacturer", full)
+        self.assertNotIn("fake KYC SMS wave", full)
 
 
 if __name__ == "__main__":
