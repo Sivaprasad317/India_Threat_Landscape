@@ -20,6 +20,7 @@ Usage
   python main.py stats
   python main.py health                     feed freshness and failures
   python main.py validate                   check hand-maintained data files
+  python main.py backtest --write docs/BACKTEST.md
 """
 
 import argparse
@@ -458,6 +459,37 @@ def cmd_health(args):
         print(f"  {GREEN}All collected feeds are current.{RESET}\n")
 
 
+def cmd_backtest(args):
+    from core.backtest import report_markdown, run_backtest, weight_sensitivity
+    from core.scoring_multi import rank_sectors_multi
+    db.init_signals()
+    results = run_backtest(window_days=args.window, horizon_days=args.horizon, step_days=args.step)
+    if not results["anchors"]:
+        print(f"\n{YELLOW}Not enough victim history to backtest.{RESET}\n")
+        return
+    s = results["summary"]
+    print(f"\n{BOLD}Scoring backtest{RESET}  {DIM}{len(results['anchors'])} anchors, "
+          f"{results['settings']['first_anchor']} to {results['settings']['last_anchor']}, "
+          f"{args.window}-day look-back, {args.horizon}-day outcome{RESET}")
+    print(f"  {'ranking':<38}{'Spearman rho':>14}{'capture@3':>12}")
+    labels = {"model": "this model", "model_no_cii": "this model without criticality",
+              "recent_victims": "recent victims only", "cii_only": "CII designation only",
+              "random": "random (expected)"}
+    for key, label in labels.items():
+        m = s[key]
+        print(f"  {label:<38}{str(m['spearman']):>14}{str(m['capture3']):>12}")
+    print(f"\n  Model beat the recent-victims baseline at {s['model_beats_recent']} of "
+          f"{len(results['anchors'])} anchors; anchors with data for all components: "
+          f"{s['anchors_with_all_components']}.")
+    if args.write:
+        scored = rank_sectors_multi(_load_signals(60))
+        text = report_markdown(results, weight_sensitivity(scored), "current 60-day ranking")
+        Path(args.write).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.write).write_text(text, encoding="utf-8")
+        print(f"  Report written to {args.write}")
+    print()
+
+
 def cmd_validate(args):
     from core.validate import validate_data_files
     results = validate_data_files()
@@ -524,6 +556,13 @@ def main():
     p.add_argument("--fail-on-problems", action="store_true",
                    help="exit with code 1 when a feed is failing or stale (for CI)")
     p.set_defaults(func=cmd_health)
+
+    p = sub.add_parser("backtest", help="test sector rankings against later victims")
+    p.add_argument("--window", type=int, default=60, help="look-back days scored at each anchor")
+    p.add_argument("--horizon", type=int, default=30, help="days of outcomes after each anchor")
+    p.add_argument("--step", type=int, default=30, help="days between anchors")
+    p.add_argument("--write", default="", help="write a Markdown report, e.g. docs/BACKTEST.md")
+    p.set_defaults(func=cmd_backtest)
 
     p = sub.add_parser("validate", help="check the hand-maintained data files")
     p.set_defaults(func=cmd_validate)

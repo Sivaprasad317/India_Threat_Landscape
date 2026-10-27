@@ -285,6 +285,48 @@ class TestCorrelationGrading(unittest.TestCase):
         self.assertEqual(fox.confidence, 0.5)
 
 
+class TestBacktest(unittest.TestCase):
+    def test_rank_metrics(self):
+        from core.backtest import capture_at_k, kendall_tau, spearman
+        self.assertEqual(spearman([1, 2, 3, 4], [10, 20, 30, 40]), 1.0)
+        self.assertEqual(spearman([1, 2, 3, 4], [40, 30, 20, 10]), -1.0)
+        self.assertIsNone(spearman([1, 1, 1], [1, 2, 3]))
+        self.assertEqual(kendall_tau(["a", "b", "c"], ["a", "b", "c"]), 1.0)
+        self.assertEqual(kendall_tau(["c", "b", "a"], ["a", "b", "c"]), -1.0)
+        scores = {"BFSI": 9, "IT_ITES": 8, "HEALTHCARE": 7, "EDUCATION": 1}
+        self.assertEqual(capture_at_k(scores, {"BFSI": 2, "EDUCATION": 2}), 0.5)
+        self.assertIsNone(capture_at_k(scores, {}))
+
+    def test_anchor_uses_no_future_data(self):
+        from datetime import date
+        from core.backtest import evaluate_anchor
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "b.db")
+            db.init_signals(path)
+
+            def victim(org, sector, when):
+                db.upsert_signal(Signal(signal_type=SignalType.VICTIM, title=f"{org} listed", source="ransomware.live",
+                                        observed_at=when, india_relevance=1.0, confidence=0.6, severity=Severity.HIGH,
+                                        sectors=[sector], entities=Entities(organisations=[org])), db_path=path)
+            victim("Past Bank", "BFSI", "2026-03-01T00:00:00+00:00")
+            victim("Future Clinic A", "HEALTHCARE", "2026-03-20T00:00:00+00:00")
+            victim("Future Clinic B", "HEALTHCARE", "2026-03-25T00:00:00+00:00")
+            row = evaluate_anchor(date(2026, 3, 10), window_days=30, horizon_days=30, db_path=path)
+        self.assertEqual(row["future_victims"], 2)
+        self.assertEqual(row["model_top3"][0], "BFSI")          # scored only from the past
+        self.assertEqual(row["actual_top3"][0], "HEALTHCARE")   # outcome comes from after the anchor
+        self.assertEqual(row["components_with_data"], ["impact"])
+
+    def test_bundled_backtest_runs(self):
+        from core.backtest import run_backtest
+        result = run_backtest()
+        self.assertGreaterEqual(len(result["anchors"]), 12)
+        s = result["summary"]
+        # Any sensible ranking should beat a random one on this history
+        self.assertGreater(s["recent_victims"]["spearman"], s["random"]["spearman"])
+        self.assertGreater(s["model"]["spearman"], s["random"]["spearman"])
+
+
 class TestScoring(unittest.TestCase):
     def test_scoring_multi_zero_cap_guard(self):
         sig = Signal(

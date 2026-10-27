@@ -700,6 +700,25 @@ def extract_victim_attributions(signals: List[Signal]) -> Tuple[List[Dict], int,
     return out, total_postings, len(out)
 
 
+def _backtest_limit_text() -> str:
+    """One-line backtest result for the limitations list, computed from the database."""
+    try:
+        from .backtest import run_backtest
+        result = run_backtest()
+    except sqlite3.Error:
+        result = {"anchors": []}
+    n = len(result.get("anchors", []))
+    if not n:
+        return ("<b>Score Validation:</b> Not enough leak-site history to backtest the sector ranking yet; "
+                "treat scores as unvalidated.")
+    s = result["summary"]
+    return (f"<b>Score Validation:</b> Backtested at {n} past dates against the next 30 days of leak-site victims, "
+            f"the ranking scored a mean Spearman correlation of {s['model']['spearman']} versus "
+            f"{s['recent_victims']['spearman']} for simply ranking by recent victims and 0 for random. "
+            f"Exploit, infrastructure, pressure and exposure components are not yet backtested for lack of history. "
+            f"Method and results: METHODOLOGY.md.")
+
+
 def _manual_feed_note(signals: List[Signal], window_days: int) -> str:
     """What the hand-maintained dark-web and hacktivist feeds contributed."""
     leaks = sum(1 for s in signals if s.signal_type == SignalType.DATA_LEAK)
@@ -2726,33 +2745,12 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         "<b>Hacktivist Disinformation:</b> Hacktivist claims are treated with low default confidence (0.40-0.60). Claims are frequently recycled, exaggerated, or claim defacements as critical infrastructure breaches.",
         "<b>Small Signal Sensitivity:</b> Industry sectors with limited telemetry can experience noticeable score shifts from single incidents; early indicators should be interpreted directionally.",
     ]
+    limits.append(_backtest_limit_text())
     for limit in limits:
         story.append(Paragraph(f"* {limit}", st["body_justify"]))
         story.append(Spacer(1, 2.0))
 
     story.append(Spacer(1, 4))
-    if health_rows:
-        story.append(Paragraph("<b>Source Health at Generation</b>", st["h3"]))
-        story.append(Paragraph(
-            "Last collected is the last collector run that did not fail; newest record is the most recent item the feed "
-            "returned. A recently collected feed can still carry old records. Limits are the age after which a feed counts as stale.",
-            st["small"]))
-        status_hex = {"OK": "#2F855A", "DEGRADED": "#B7791F", "STALE": "#C2410C", "FAILING": "#9B1C1C",
-                      "NOT COLLECTED": "#5B6573", "MANUAL": "#5B6573"}
-        h_rows = [[Paragraph(f"<b>{h}</b>", st["cellb"]) for h in
-                   ("Feed", "Status", "Last collected", "Newest record", "Stale after")]]
-        for r in health_rows:
-            h_rows.append([
-                Paragraph(_esc(r["source"]), st["cell"]),
-                Paragraph(f"<font color='{status_hex.get(r['status'], '#5B6573')}'><b>{r['status']}</b></font>", st["cell"]),
-                Paragraph(_esc(r["last_collected"] or "never"), st["cellc"]),
-                Paragraph(_esc(r["newest_record"] or "-"), st["cellc"]),
-                Paragraph(f"{r['max_age_days']} days" if r["max_age_days"] else "analyst-maintained", st["cellc"]),
-            ])
-        story.append(_table(h_rows, [56 * mm, 30 * mm, 30 * mm, 30 * mm, 32 * mm], st, zebra=True,
-                            padding=(1.2, 1.2, 2.5, 2.5)))
-        story.append(Spacer(1, 5))
-
     story.append(Paragraph("<b>Admiralty Intelligence Confidence Scale (ICD 203 Reference)</b>", st["h3"]))
 
     adm_rows = [
@@ -2791,6 +2789,30 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         story.append(Paragraph("<b>Statutory &amp; Regulatory Disclaimer</b>", st["h3"]))
         story.append(Paragraph(_esc(DISCLAIMER), st["small"]))
     story.append(Spacer(1, 4))
+
+    # Second page of the section: feed health and provenance belong together
+    story.append(PageBreak())
+    if health_rows:
+        story.append(Paragraph("<b>Source Health at Generation</b>", st["h3"]))
+        story.append(Paragraph(
+            "Last collected is the last collector run that did not fail; newest record is the most recent item the feed "
+            "returned. A recently collected feed can still carry old records. Limits are the age after which a feed counts as stale.",
+            st["small"]))
+        status_hex = {"OK": "#2F855A", "DEGRADED": "#B7791F", "STALE": "#C2410C", "FAILING": "#9B1C1C",
+                      "NOT COLLECTED": "#5B6573", "MANUAL": "#5B6573"}
+        h_rows = [[Paragraph(f"<b>{h}</b>", st["cellb"]) for h in
+                   ("Feed", "Status", "Last collected", "Newest record", "Stale after")]]
+        for r in health_rows:
+            h_rows.append([
+                Paragraph(_esc(r["source"]), st["cell"]),
+                Paragraph(f"<font color='{status_hex.get(r['status'], '#5B6573')}'><b>{r['status']}</b></font>", st["cell"]),
+                Paragraph(_esc(r["last_collected"] or "never"), st["cellc"]),
+                Paragraph(_esc(r["newest_record"] or "-"), st["cellc"]),
+                Paragraph(f"{r['max_age_days']} days" if r["max_age_days"] else "analyst-maintained", st["cellc"]),
+            ])
+        story.append(_table(h_rows, [56 * mm, 30 * mm, 30 * mm, 30 * mm, 32 * mm], st, zebra=True,
+                            padding=(1.2, 1.2, 2.5, 2.5)))
+        story.append(Spacer(1, 5))
 
     story.append(Paragraph(
         f"<b>Technical Metadata &amp; Pipeline Provenance:</b><br/>"
