@@ -101,7 +101,16 @@ organisation name or description. **If neither matches, the state is
 
 ---
 
-## 5. Sector risk score
+## 5. Sector scores: activity and composite
+
+Each sector gets two numbers, because they answer different questions:
+
+- **Activity score**: how much threat activity the data shows against the
+  sector in this window. Built only from the five data components below.
+- **Composite risk score**: activity plus a fixed weight for Section 70A
+  (CII) sectors. It sets the ranking order and states priority: an incident
+  in a CII sector matters more. That weight is a judgement, not an
+  observation.
 
 For each sector (`core/scoring_multi.py`, version 2.5):
 
@@ -120,14 +129,24 @@ For each sector (`core/scoring_multi.py`, version 2.5):
    stops a flood of weak signals outranking a few severe ones; the shared cap
    makes scores relative within a run.
 5. **Criticality** is 100 for Section 70A (NCIIPC) sectors and 30 otherwise.
-6. Score = `0.30 impact + 0.20 exploit + 0.15 infra + 0.15 criticality +
+6. Composite = `0.30 impact + 0.20 exploit + 0.15 infra + 0.15 criticality +
    0.10 pressure + 0.10 exposure`.
-   Bands: Critical 80+, High 60-79, Moderate 40-59, Low 20-39, Minimal <20.
+7. Activity = `(0.30 impact + 0.20 exploit + 0.15 infra + 0.10 pressure +
+   0.10 exposure) / 0.85`: the same weights without criticality, rescaled
+   to sum to 1.
+   Bands (both scores): Critical 80+, High 60-79, Moderate 40-59, Low 20-39,
+   Minimal <20.
 
-**What a score means.** Relative attention warranted in this window, not a
-probability. A sector at 70 is among the most heavily and broadly targeted
-in the data seen, not "70% likely to be attacked". Criticality deliberately
-raises sectors where an incident would matter more, even with less activity.
+The bulletin shows both: activity and composite columns in the sector table,
+a tick for activity on the cover chart's composite bars, and a note whenever
+the sector with the most activity is not the composite leader. The QA gate
+recomputes both from the components.
+
+**What a score means.** A description of this window, not a probability or
+a forecast. A sector with activity 70 is among the most heavily and broadly
+targeted in the data seen, not "70% likely to be attacked". Section 7 shows
+that neither score yet predicts next month's victims better than counting
+this month's.
 
 ---
 
@@ -165,7 +184,7 @@ Results on the bundled database (24 monthly anchors, Oct 2024 to Sep 2026):
 | Ranking | Mean Spearman rho | Mean capture@3 |
 |---|---|---|
 | This model (v2.5 weights) | 0.525 | 0.478 |
-| This model without the criticality weight | 0.609 | 0.592 |
+| Activity score (no criticality weight) | 0.609 | 0.592 |
 | Recent victims only (baseline) | 0.622 | 0.585 |
 | CII designation only | -0.254 | 0.115 |
 | Random (expected) | 0.000 | 0.214 |
@@ -177,22 +196,25 @@ top-ranked sectors.*
 
 - Rankings are far better than random: sectors that are being hit tend to
   keep being hit.
-- The published model is **worse than simply counting recent victims** at
+- The composite is **worse than simply counting recent victims** at
   predicting where the next month's leak-site victims land (it won at 4 of
-  24 anchors). Removing the criticality weight brings it level with that
-  baseline. CII-designated sectors see *fewer* leak-site postings, so the
-  criticality component pulls the ranking away from where victims appear.
+  24 anchors). The activity score is level with that baseline, not better.
+  CII-designated sectors see *fewer* leak-site postings, so the criticality
+  weight pulls the ranking away from where victims appear; that is expected
+  of a priority weight and is why it is reported separately.
+- **No claim of predictive value is made.** Neither score beats the
+  simplest baseline, so the bulletin presents both as descriptions of the
+  window.
 - In this history the model is effectively impact plus criticality: the
   exploit, infrastructure, pressure and exposure components have no stored
   history before late August 2026 and **are not yet tested**. The daily
   scheduled run builds that history; re-run the backtest as it grows.
 
-**Recommendation (not yet applied).** Report two numbers per sector instead
-of one: an activity score (likelihood, from the five data components) and a
-criticality flag (consequence). Mixing them hides the fact that the score is
-partly a statement of priorities rather than a forecast. Changing the
-published weights is an analyst decision and should follow a re-run of the
-backtest once all components have history.
+**What changed after this test.** The bulletin now reports the activity
+score next to the composite (section 5), so the part of the ranking that is
+a statement of priority is visible. The published weights are unchanged:
+changing them is an analyst decision that should follow a re-run of the
+backtest once all five data components have history.
 
 **Limits of the test.** The outcome is leak-site postings, a biased sample:
 organisations that pay quietly never appear. Monthly victim counts are small

@@ -363,7 +363,7 @@ def create_sector_bar_chart(scored_sectors: List[Dict], width: float = 178 * mm,
     top_sectors = scored_sectors[:max_items]
     bar_height = 10.5
     gap = 5.5
-    header_height = 26
+    header_height = 34
     chart_height = header_height + len(top_sectors) * (bar_height + gap) + 6
     d = Drawing(width, chart_height)
 
@@ -375,6 +375,11 @@ def create_sector_bar_chart(scored_sectors: List[Dict], width: float = 178 * mm,
     d.add(String(12, chart_height - 17, "Sector Risk Score Comparison",
                  fontName="Helvetica-Bold", fontSize=9.0,
                  fillColor=NAVY))
+
+    d.add(String(12, chart_height - 27,
+                 "Bar: composite score (sets the order). Navy tick: activity score, observed activity only "
+                 "without the CII weight.", fontName="Helvetica", fontSize=6.2,
+                 fillColor=colors.HexColor("#555555")))
 
     # Legend badges (Synchronized with core/scoring_multi.py BANDS)
     legend = [
@@ -414,6 +419,9 @@ def create_sector_bar_chart(scored_sectors: List[Dict], width: float = 178 * mm,
         fill_w = max(4, min(bar_area_width, (score / 100.0) * bar_area_width))
         d.add(Rect(track_x, y, fill_w, bar_height, rx=2.5, ry=2.5,
                    fillColor=col, strokeColor=None))
+        if "activity_score" in s:
+            tick_x = track_x + min(bar_area_width, float(s["activity_score"]) / 100.0 * bar_area_width)
+            d.add(Rect(tick_x - 0.7, y - 1.5, 1.4, bar_height + 3, fillColor=NAVY, strokeColor=None))
 
         d.add(String(track_x + bar_area_width + 8, y + 2, f"{score:.1f}",
                      fontName="Helvetica-Bold", fontSize=7.5, fillColor=col))
@@ -713,8 +721,9 @@ def _backtest_limit_text() -> str:
                 "treat scores as unvalidated.")
     s = result["summary"]
     return (f"<b>Score Validation:</b> Backtested at {n} past dates against the next 30 days of leak-site victims, "
-            f"the ranking scored a mean Spearman correlation of {s['model']['spearman']} versus "
-            f"{s['recent_victims']['spearman']} for simply ranking by recent victims and 0 for random. "
+            f"the composite ranking scored a mean Spearman correlation of {s['model']['spearman']} and the activity "
+            f"score {s['model_no_cii']['spearman']}, versus {s['recent_victims']['spearman']} for simply ranking by "
+            f"recent victims and 0 for random, so neither is presented as a forecast. "
             f"Exploit, infrastructure, pressure and exposure components are not yet backtested for lack of history. "
             f"Method and results: METHODOLOGY.md.")
 
@@ -1707,8 +1716,12 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
                     f"Act first on: {named}{more}.")
     if scored_sectors:
         top = scored_sectors[0]
+        top_act = max(scored_sectors, key=lambda s: s.get("activity_score", 0.0))
+        act_txt = (f" On observed activity alone, {_esc(top_act['label'])} ranks first ({top_act['activity_score']:.1f})."
+                   if top_act["sector"] != top["sector"] else
+                   f" It also has the most observed activity ({top.get('activity_score', 0.0):.1f} without the CII weight).")
         bluf.append(f"<b>{_esc(top['label'])}</b> carries the highest composite risk score "
-                    f"({top['risk_score']:.1f}, {top['risk_band']}). "
+                    f"({top['risk_score']:.1f}, {top['risk_band']}).{act_txt} "
                     f"{critical_sectors} sector{'s rate' if critical_sectors != 1 else ' rates'} High or above.")
     if unique_orgs:
         org_word = "organisation was" if unique_orgs == 1 else "organisations were"
@@ -1892,6 +1905,10 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         driver_str = f" driven by {', '.join(drivers)}" if drivers else ""
         j3_parts.append(f"{s_lbl} leads the risk ranking ({s_score:.1f}, {s_band}){driver_str}" if not j3_parts else f"{s_lbl} ({s_score:.1f}, {s_band}){driver_str}")
 
+    by_activity = sorted(scored_sectors, key=lambda s: -s.get("activity_score", 0.0))
+    if by_activity and top3_secs and by_activity[0]["sector"] != top3_secs[0]["sector"]:
+        j3_parts.append(f"on observed activity alone, without the CII weight, {by_activity[0]['label']} ranks first "
+                        f"({by_activity[0]['activity_score']:.1f})")
     j3_desc = f"{'; '.join(j3_parts)}{sample_caveat}."
 
     # Judgement 4: how groups publish Indian victims
@@ -2091,14 +2108,18 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     sec_no += 1
     story.append(_section_header("Sector Risk Ranking & Assessment Matrix", sec_no, st))
     story.append(Paragraph(
-        "Quantitative risk scoring across fourteen critical Indian industry sectors. Component scores reflect claimed victim impact (named on leak sites), "
-        "actively exploited sector CVEs, malicious C2 and phishing infrastructure, regulatory pressure, and Section 70A Critical Information Infrastructure (CII) designation.",
+        "Two scores per sector. <b>Activity</b> is observed threat activity in this window: claimed victim impact (named on leak sites), "
+        "actively exploited sector CVEs, malicious C2 and phishing infrastructure, campaign and hacktivist pressure, and exposure. "
+        "<b>Composite</b> adds a fixed weight for Section 70A Critical Information Infrastructure (CII) sectors and sets the ranking "
+        "order; that weight states priority, not activity. Neither score is a forecast: in backtests neither ranked next month's "
+        "leak-site victims better than counting recent victims (Methodology).",
         st["small"]))
     story.append(Spacer(1, 4))
 
     sec_rows = [[
         Paragraph("<b>Sector</b>", st["cellb"]),
-        Paragraph("<b>Score</b>", st["cellb"]),
+        Paragraph("<b>Activity</b>", st["cellb"]),
+        Paragraph("<b>Composite</b>", st["cellb"]),
         Paragraph("<b>Band</b>", st["cellb"]),
         Paragraph("<b>Postings (Orgs)</b>", st["cellb"]),
         Paragraph("<b>Vulnerabilities (KEV+NVD)</b>", st["cellb"]),
@@ -2111,7 +2132,8 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         band_str = assign_risk_band(s["risk_score"])
         sec_rows.append([
             Paragraph(_esc(s["label"]), st["cell"]),
-            Paragraph(f"<b>{s['risk_score']:.1f}</b>", st["cell"]),
+            Paragraph(f"{s.get('activity_score', 0.0):.1f}", st["cellc"]),
+            Paragraph(f"<b>{s['risk_score']:.1f}</b>", st["cellc"]),
             _band_text(band_str, st),
             Paragraph(f"{s['victim_count']} ({uniq_org_cnt})", st["cellc"]),
             Paragraph(str(s["exploited_cve_count"]), st["cellc"]),
@@ -2120,7 +2142,7 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
             Paragraph("<b>Yes</b>" if s["nciipc_critical"] else "-", st["cellc"]),
         ])
     story.append(_table(sec_rows,
-                        [42*mm, 11*mm, 23*mm, 21*mm, 28*mm, 21*mm, 16*mm, 16*mm],
+                        [41*mm, 13*mm, 15*mm, 18*mm, 17*mm, 23*mm, 27*mm, 13*mm, 11*mm],
                         st, zebra=True, padding=(1.6, 1.6, 2.2, 2.2)))
     story.append(Spacer(1, 4))
 
@@ -2157,6 +2179,7 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         Paragraph(
             f"<b>Mathematical Scoring Weights &amp; Normalisation Formula (Scoring Engine v{SCORING_VERSION}, data snapshot {snapshot_ts})</b><br/>"
             "<code>Risk Score = 0.30*Impact + 0.20*Exploit + 0.15*Infra + 0.15*Criticality(CII) + 0.10*Pressure + 0.10*Exposure</code><br/>"
+            "<code>Activity Score = (0.30*Impact + 0.20*Exploit + 0.15*Infra + 0.10*Pressure + 0.10*Exposure) / 0.85</code><br/>"
             "<i>Temporal Half-Life Decay:</i> Weight(t) = exp(-ln(2) * age / 21 days). "
             "<i>Risk Bands:</i> Critical (80+), High (60-79), Moderate (40-59), Low (20-39), Minimal (&lt;20).<br/>"
             f"<i>CVE-to-Sector Mapping &amp; Exposure Scoring:</i> {cve_mapping_rule_text}<br/>"
@@ -2220,7 +2243,7 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         story.append(Paragraph(
             f"<i>* Multi-Source Methodology &amp; Sector Mapping Rules: Threat telemetry is collected from {len(sources)} multi-source feeds. "
             f"CISA KEV and NVD share upstream CVE data, while ransomware.live and ransomlook.io track overlapping extortion leak sites; "
-            f"corroboration scoring adjusts for shared upstream parents without awarding artificial confidence uplifts. Out of {total_iocs} actionable domestic indicators across {unique_hosts} unique hosts, "
+            f"corroboration scoring adjusts for shared upstream parents without awarding artificial confidence uplifts. Out of {total_iocs} domestic indicators across {unique_hosts} unique hosts, "
             f"{attr_iocs_cnt} are attributed to specific sector technology stacks, while {unsec_iocs_cnt} represent unsectored domestic delivery infrastructure ({attr_iocs_cnt} + {unsec_iocs_cnt} = {total_iocs} total domestic threat indicators across {unique_hosts} unique hosts). "
             f"Sensitivity Analysis: Scores without the Delivery/Phishing Hosts (Infra) component were renormalised by dividing raw scores by 0.85 to rescale weights to 1.0: {sens_str}. "
             f"Rankings are sensitive to the Infra component (active delivery infrastructure). Scores can fall or rise when Infra is removed because Infra weight differs per sector. "

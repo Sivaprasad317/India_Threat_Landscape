@@ -477,7 +477,7 @@ def cmd_backtest(args):
           f"{results['settings']['first_anchor']} to {results['settings']['last_anchor']}, "
           f"{args.window}-day look-back, {args.horizon}-day outcome{RESET}")
     print(f"  {'ranking':<38}{'Spearman rho':>14}{'capture@3':>12}")
-    labels = {"model": "this model", "model_no_cii": "this model without criticality",
+    labels = {"model": "this model", "model_no_cii": "activity score (no criticality)",
               "recent_victims": "recent victims only", "cii_only": "CII designation only",
               "random": "random (expected)"}
     for key, label in labels.items():

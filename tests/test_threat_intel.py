@@ -404,6 +404,18 @@ class TestScoring(unittest.TestCase):
         score = score_sector_multi("BFSI", [sig], caps={"impact": 0.0})
         self.assertIsInstance(score["risk_score"], float)
 
+    def test_activity_score_leaves_out_criticality(self):
+        sig = Signal(signal_type=SignalType.VICTIM, title="Victim", source="Test",
+                     observed_at="2026-10-09T00:00:00Z", india_relevance=1.0, sectors=["BFSI"])
+        caps = {"impact": sig.risk_contribution}
+        cii = score_sector_multi("BFSI", [sig], caps=caps)          # Section 70A sector
+        other = score_sector_multi("RETAIL", [sig], caps=caps)
+        # Same evidence, same activity; only the composite carries the CII weight
+        self.assertEqual(cii["activity_score"], other["activity_score"])
+        self.assertGreater(cii["risk_score"], other["risk_score"])
+        expected = cii["components"]["impact"] * 0.30 / 0.85
+        self.assertAlmostEqual(cii["activity_score"], expected, places=1)
+
     def test_rank_sectors_multi(self):
         sig = Signal(
             signal_type=SignalType.VICTIM,

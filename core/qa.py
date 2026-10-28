@@ -179,6 +179,12 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
         assert s["risk_band"] == assign_risk_band(s["risk_score"]), (
             f"QA FAIL: Band label {s['risk_band']} does not match score {s['risk_score']} in {s['sector']}"
         )
+        # Activity excludes criticality: the published formula renormalised over the data components
+        activity = (0.30 * c["impact"] + 0.20 * c["exploit"] + 0.15 * c["infra"] +
+                    0.10 * c["pressure"] + 0.10 * c["exposure"]) / 0.85
+        assert abs(s["activity_score"] - activity) <= 0.2, (
+            f"QA FAIL: Activity divergence for {s['sector']}: {s['activity_score']} vs calc={activity:.1f}"
+        )
 
     # 4. IOC Attribution Reconciliation
     extracted_iocs = extract_iocs(signals, public_mode=public_mode)

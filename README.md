@@ -107,7 +107,10 @@ set `SCORING_ANCHOR` in `.env` to an ISO timestamp (naive = IST) or `now`.
 
 ## How the score is built, and how far to trust it
 
-Each sector gets a 0-100 score from six components:
+Each sector gets two 0-100 scores: a **composite** from the six components
+below, which sets the ranking, and an **activity** score from the five data
+components alone (criticality left out, weights rescaled), which shows how
+much the data actually saw. The bulletin prints both.
 
 | Component | Weight | Measures |
 |---|---|---|
@@ -129,13 +132,15 @@ leak-site victims. On the bundled data (24 monthly anchors):
 | Ranking | Spearman rho | Next-month victims in its top 3 |
 |---|---|---|
 | This model | 0.53 | 48% |
-| This model without criticality | 0.61 | 59% |
+| Activity score (no criticality weight) | 0.61 | 59% |
 | Ranking by recent victims only | 0.62 | 59% |
 | Random | 0.00 | 21% |
 
-Rankings are well above random, but the criticality weight costs predictive
-agreement: it deliberately lifts critical sectors that see fewer leak-site
-postings. The exploit, infra, pressure and exposure components have no
+Rankings are well above random, but none beats counting recent victims, so
+the bulletin makes no forecasting claim. The criticality weight lifts CII
+sectors that see fewer leak-site postings; it is a statement of priority, so
+the bulletin shows each sector's activity score (no criticality) next to the
+composite. The exploit, infra, pressure and exposure components have no
 stored history before late August 2026 and are not yet tested; the daily
 scheduled run builds that history. Details and a recommendation:
 [METHODOLOGY.md](METHODOLOGY.md#7-has-the-score-been-tested),
