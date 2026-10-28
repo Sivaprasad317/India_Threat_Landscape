@@ -119,11 +119,8 @@ def evaluate_anchor(anchor: date, window_days: int = 60, horizon_days: int = 30,
 
     scored = rank_sectors_multi(past, anchor_dt=_end_of_day(anchor))
     model = {s["sector"]: s["risk_score"] for s in scored}
-    # Same model with the criticality weight removed and the rest renormalised
-    no_cii_w = {c: w for c, w in COMPONENT_WEIGHTS.items() if c != "criticality"}
-    total_w = sum(no_cii_w.values())
-    model_no_cii = {s["sector"]: sum(s["components"][c] * w / total_w for c, w in no_cii_w.items())
-                    for s in scored}
+    # The activity score: criticality removed, the rest renormalised
+    model_no_cii = {s["sector"]: s["activity_score"] for s in scored}
     recent = victim_orgs_by_sector(past)
     cii = {s: (1.0 if is_nciipc_critical(s) else 0.0) for s in SCORED_SECTORS}
 
@@ -251,7 +248,7 @@ def report_markdown(results: Dict, sensitivity: List[Dict], scored_label: str) -
         "|---|---|---|",
     ]
     names = {"model": "This model (v2.5 weights)",
-             "model_no_cii": "This model without the criticality weight (ablation)",
+             "model_no_cii": "Activity score (composite without the criticality weight)",
              "recent_victims": "Recent victims only (baseline)",
              "cii_only": "CII designation only (baseline)", "random": "Random (expected)"}
     for key, label in names.items():
@@ -265,6 +262,9 @@ def report_markdown(results: Dict, sensitivity: List[Dict], scored_label: str) -
         "",
         "## What this can and cannot show",
         "",
+        "- No ranking here beats simply ranking sectors by their recent victims. These results do not support "
+        "a claim that the score predicts where victims appear better than counting them; the bulletin reports "
+        "the activity score and the composite as descriptions of the window, not forecasts.",
         "- The outcome is leak-site postings. Organisations that pay quietly never appear, so the test measures "
         "agreement with a biased sample, not with all incidents.",
         "- Most anchors only had victim history: the exploit, infrastructure, pressure and exposure components "

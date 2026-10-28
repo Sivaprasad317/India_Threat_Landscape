@@ -434,7 +434,7 @@ def cmd_stats(args):
 
 
 HEALTH_COLOR = {"OK": GREEN, "MANUAL": DIM, "DEGRADED": YELLOW, "NOT COLLECTED": DIM,
-                "STALE": YELLOW, "FAILING": RED}
+                "NO KEY": DIM, "STALE": YELLOW, "FAILING": RED}
 
 
 def cmd_health(args):
@@ -451,7 +451,11 @@ def cmd_health(args):
         print(f"  {colour}{r['status']:<14}{RESET}{r['collector']:<20}{r['last_collected'] or '-':<16}"
               f"{r['newest_record'] or '-':<16}{limit:<8}{DIM}{r['last_error'][:40]}{RESET}")
     bad = problems(rows)
+    no_key = [r["collector"] for r in rows if r["status"] == "NO KEY"]
     print()
+    if no_key:
+        print(f"  {DIM}{len(no_key)} feed(s) not configured on this machine (no API key, not counted "
+              f"as a problem): {', '.join(no_key)}{RESET}")
     if bad:
         print(f"  {RED}{len(bad)} feed(s) failing or stale{RESET}: {', '.join(r['collector'] for r in bad)}\n")
         if args.fail_on_problems:
@@ -473,7 +477,7 @@ def cmd_backtest(args):
           f"{results['settings']['first_anchor']} to {results['settings']['last_anchor']}, "
           f"{args.window}-day look-back, {args.horizon}-day outcome{RESET}")
     print(f"  {'ranking':<38}{'Spearman rho':>14}{'capture@3':>12}")
-    labels = {"model": "this model", "model_no_cii": "this model without criticality",
+    labels = {"model": "this model", "model_no_cii": "activity score (no criticality)",
               "recent_victims": "recent victims only", "cii_only": "CII designation only",
               "random": "random (expected)"}
     for key, label in labels.items():
@@ -492,27 +496,34 @@ def cmd_backtest(args):
 
 
 def cmd_export(args):
-    from core.export import to_misp_event, to_stix_bundle, write_json
+    from core.export import actionable, to_misp_event, to_stix_bundle, write_json
     from core.iocs import extract_iocs
     db.init_signals()
     signals = _load_signals(args.days)
-    iocs = extract_iocs(signals, public_mode=args.public)
+    stamp = datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime("%Y-%m-%d")
+    all_iocs = extract_iocs(signals, public_mode=args.public, as_of=stamp)
+    iocs = actionable(all_iocs, args.include_expired)
+    expired = len(all_iocs) - len(actionable(all_iocs))
     if not iocs:
-        print(f"\n{YELLOW}No indicators in the last {args.days} days to export.{RESET}\n")
+        reason = (f"all {expired} indicators expired before {stamp}; refresh the feeds, "
+                  f"or pass --include-expired for a historical export") if expired else \
+            f"no indicators in the last {args.days} days"
+        print(f"\n{YELLOW}Nothing exported: {reason}.{RESET}\n")
         return
     producer = args.prepared_by or os.getenv("ANALYST_NAME", "") or "India Threat Landscape"
-    stamp = datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime("%Y-%m-%d")
     edition = "Public" if args.public else "Internal"
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     written = []
     if args.format in ("stix", "both"):
         path = outdir / f"IOCs_India_Threat_Landscape_{edition}_{stamp}.stix.json"
-        written.append(write_json(to_stix_bundle(iocs, producer, args.public), str(path)))
+        written.append(write_json(to_stix_bundle(iocs, producer, args.public, include_expired=True), str(path)))
     if args.format in ("misp", "both"):
         path = outdir / f"IOCs_India_Threat_Landscape_{edition}_{stamp}.misp.json"
-        written.append(write_json(to_misp_event(iocs, producer, args.public, stamp), str(path)))
-    print(f"\n{GREEN}Exported {len(iocs)} indicators{RESET}")
+        written.append(write_json(to_misp_event(iocs, producer, args.public, stamp, include_expired=True), str(path)))
+    print(f"\n{GREEN}Exported {len(iocs)} indicators{RESET}"
+          + (f" ({expired} expired left out; --include-expired keeps them)" if expired and not args.include_expired
+             else f" ({expired} of them expired)" if expired else ""))
     for path in written:
         print(f"  {path}")
     print()
@@ -598,6 +609,8 @@ def main():
     p.add_argument("--public", action="store_true", help="public edition (TLP:CLEAR)")
     p.add_argument("--outdir", default="exports")
     p.add_argument("--prepared-by", "--by", default="", dest="prepared_by")
+    p.add_argument("--include-expired", action="store_true",
+                   help="also export indicators past their expiry date (not marked for detection)")
     p.set_defaults(func=cmd_export)
 
     p = sub.add_parser("validate", help="check the hand-maintained data files")

@@ -13,6 +13,12 @@ of date. Two inputs cover that gap:
 
 Neither feeds sector scoring. Headlines are analysis, not telemetry, and
 mixing them in would make scores depend on what the press chose to cover.
+
+Every entry records its evidence: a confidence rating, the date it was last
+verified, a one-line evidence note, and for each source its type (primary:
+the affected vendor or organisation, a regulator or a government CERT;
+research: original technical analysis; news: reporting), publication date
+and the date it was checked. "high" needs a primary source.
 """
 
 import json
@@ -26,7 +32,19 @@ DEFAULT_PATH = "data/headline_threats.json"
 
 SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
 REQUIRED_FIELDS = ("id", "title", "category", "severity", "date",
-                   "summary", "actions", "sources")
+                   "summary", "actions", "sources", "confidence", "last_verified",
+                   "evidence")
+CONFIDENCE_LEVELS = ("high", "medium", "low")
+NO_PRIMARY_NOTE = "No primary source located: based on research and news reporting."
+SOURCE_TYPES = ("primary", "research", "news")
+
+
+def _is_date(value) -> bool:
+    try:
+        date.fromisoformat(str(value)[:10])
+        return len(str(value)) == 10
+    except ValueError:
+        return False
 
 
 def validate_headline(entry: Dict) -> List[str]:
@@ -42,11 +60,30 @@ def validate_headline(entry: Dict) -> List[str]:
             problems.append(f"date '{entry['date']}' is not YYYY-MM-DD")
     if "india_direct" in entry and not isinstance(entry["india_direct"], bool):
         problems.append("india_direct must be true or false")
-    for src in entry.get("sources") or []:
+    if entry.get("confidence") and entry["confidence"] not in CONFIDENCE_LEVELS:
+        problems.append(f"confidence '{entry['confidence']}' is not one of {', '.join(CONFIDENCE_LEVELS)}")
+    if entry.get("last_verified") and not _is_date(entry["last_verified"]):
+        problems.append(f"last_verified '{entry['last_verified']}' is not YYYY-MM-DD")
+    sources = entry.get("sources") or []
+    for src in sources:
         if not isinstance(src, dict) or not src.get("name") or not src.get("url"):
             problems.append("each source needs a name and a url")
             break
+        if src.get("type") not in SOURCE_TYPES:
+            problems.append(f"source '{src['name']}' type must be one of {', '.join(SOURCE_TYPES)}")
+        for field in ("published", "retrieved"):
+            if src.get(field) and not _is_date(src[field]):
+                problems.append(f"source '{src['name']}' {field} '{src[field]}' is not YYYY-MM-DD")
+    good = [s for s in sources if isinstance(s, dict)]
+    if sources and not any(s.get("retrieved") for s in good):
+        problems.append("no source has a retrieved date: verify at least one before publishing")
+    if entry.get("confidence") == "high" and not any(s.get("type") == "primary" for s in good):
+        problems.append("confidence 'high' needs a primary source")
     return problems
+
+
+def primary_sources(entry: Dict) -> List[Dict]:
+    return [s for s in entry.get("sources", []) if s.get("type") == "primary"]
 
 
 def load_headline_threats(path: str = DEFAULT_PATH,

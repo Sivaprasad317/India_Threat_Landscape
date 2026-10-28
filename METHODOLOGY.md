@@ -33,7 +33,6 @@ named organisation, or legal advice on CERT-In reporting.
 | `crtsh_typosquat` | Lookalike domains for Indian brands | crt.sh | 14 days |
 | `otx` | Campaign reporting naming India | AlienVault OTX | 14 days |
 | `shodan_exposure` | Aggregate Indian attack-surface counts (no host lists) | Shodan | 14 days |
-| `india_threat_tracker` | Curated APT and UPI-smishing campaigns (CC BY 4.0, Sohan Kanna) as campaign reporting | India Threat Tracker | 45 days |
 | `security_news` | News headlines (kept out of scoring) | n/a | 3 days |
 | `hacktivism`, `leak_tracker` | Analyst-logged claims from `data/*.json` | analyst | manual |
 
@@ -51,7 +50,14 @@ reports two dates per feed, because they answer different questions:
 A feed is FAILING when its latest run returned nothing and logged errors,
 DEGRADED when it returned data with errors (for example after retries), STALE
 when either date is older than the limit above, and MANUAL for
-analyst-maintained files. Collectors retry network errors, HTTP 429 and 5xx
+analyst-maintained files. A feed whose collector needs an API key that is not
+set where the report runs is NO KEY: shown with its dates, not counted as a
+failure, because it is a configuration choice.
+
+**Data age.** The bulletin cover gives the newest record's date. When it is
+more than 3 days (the shortest feed cadence) before the generation date, the
+cover says so in red: the counts and rankings describe the picture to that
+date, not current activity. Collectors retry network errors, HTTP 429 and 5xx
 three times with exponential backoff; other HTTP errors are final.
 
 ---
@@ -95,7 +101,16 @@ organisation name or description. **If neither matches, the state is
 
 ---
 
-## 5. Sector risk score
+## 5. Sector scores: activity and composite
+
+Each sector gets two numbers, because they answer different questions:
+
+- **Activity score**: how much threat activity the data shows against the
+  sector in this window. Built only from the five data components below.
+- **Composite risk score**: activity plus a fixed weight for Section 70A
+  (CII) sectors. It sets the ranking order and states priority: an incident
+  in a CII sector matters more. That weight is a judgement, not an
+  observation.
 
 For each sector (`core/scoring_multi.py`, version 2.5):
 
@@ -114,14 +129,24 @@ For each sector (`core/scoring_multi.py`, version 2.5):
    stops a flood of weak signals outranking a few severe ones; the shared cap
    makes scores relative within a run.
 5. **Criticality** is 100 for Section 70A (NCIIPC) sectors and 30 otherwise.
-6. Score = `0.30 impact + 0.20 exploit + 0.15 infra + 0.15 criticality +
+6. Composite = `0.30 impact + 0.20 exploit + 0.15 infra + 0.15 criticality +
    0.10 pressure + 0.10 exposure`.
-   Bands: Critical 80+, High 60-79, Moderate 40-59, Low 20-39, Minimal <20.
+7. Activity = `(0.30 impact + 0.20 exploit + 0.15 infra + 0.10 pressure +
+   0.10 exposure) / 0.85`: the same weights without criticality, rescaled
+   to sum to 1.
+   Bands (both scores): Critical 80+, High 60-79, Moderate 40-59, Low 20-39,
+   Minimal <20.
 
-**What a score means.** Relative attention warranted in this window, not a
-probability. A sector at 70 is among the most heavily and broadly targeted
-in the data seen, not "70% likely to be attacked". Criticality deliberately
-raises sectors where an incident would matter more, even with less activity.
+The bulletin shows both: activity and composite columns in the sector table,
+a tick for activity on the cover chart's composite bars, and a note whenever
+the sector with the most activity is not the composite leader. The QA gate
+recomputes both from the components.
+
+**What a score means.** A description of this window, not a probability or
+a forecast. A sector with activity 70 is among the most heavily and broadly
+targeted in the data seen, not "70% likely to be attacked". Section 7 shows
+that neither score yet predicts next month's victims better than counting
+this month's.
 
 ---
 
@@ -159,7 +184,7 @@ Results on the bundled database (24 monthly anchors, Oct 2024 to Sep 2026):
 | Ranking | Mean Spearman rho | Mean capture@3 |
 |---|---|---|
 | This model (v2.5 weights) | 0.525 | 0.478 |
-| This model without the criticality weight | 0.609 | 0.592 |
+| Activity score (no criticality weight) | 0.609 | 0.592 |
 | Recent victims only (baseline) | 0.622 | 0.585 |
 | CII designation only | -0.254 | 0.115 |
 | Random (expected) | 0.000 | 0.214 |
@@ -171,22 +196,25 @@ top-ranked sectors.*
 
 - Rankings are far better than random: sectors that are being hit tend to
   keep being hit.
-- The published model is **worse than simply counting recent victims** at
+- The composite is **worse than simply counting recent victims** at
   predicting where the next month's leak-site victims land (it won at 4 of
-  24 anchors). Removing the criticality weight brings it level with that
-  baseline. CII-designated sectors see *fewer* leak-site postings, so the
-  criticality component pulls the ranking away from where victims appear.
+  24 anchors). The activity score is level with that baseline, not better.
+  CII-designated sectors see *fewer* leak-site postings, so the criticality
+  weight pulls the ranking away from where victims appear; that is expected
+  of a priority weight and is why it is reported separately.
+- **No claim of predictive value is made.** Neither score beats the
+  simplest baseline, so the bulletin presents both as descriptions of the
+  window.
 - In this history the model is effectively impact plus criticality: the
   exploit, infrastructure, pressure and exposure components have no stored
   history before late August 2026 and **are not yet tested**. The daily
   scheduled run builds that history; re-run the backtest as it grows.
 
-**Recommendation (not yet applied).** Report two numbers per sector instead
-of one: an activity score (likelihood, from the five data components) and a
-criticality flag (consequence). Mixing them hides the fact that the score is
-partly a statement of priorities rather than a forecast. Changing the
-published weights is an analyst decision and should follow a re-run of the
-backtest once all components have history.
+**What changed after this test.** The bulletin now reports the activity
+score next to the composite (section 5), so the part of the ranking that is
+a statement of priority is visible. The published weights are unchanged:
+changing them is an analyst decision that should follow a re-run of the
+backtest once all five data components have history.
 
 **Limits of the test.** The outcome is leak-site postings, a biased sample:
 organisations that pay quietly never appear. Monthly victim counts are small
@@ -212,23 +240,49 @@ weight rises.
 - **ASN** comes from `data/host_asn_cache.json` (lookups recorded at
   collection time). A host with no recorded lookup is reported as
   `unresolved`, never guessed.
-- Indicators expire 14 days after first seen. Text in the bulletin is
-  defanged (`hxxp`, `[.]`); the CSV keeps both raw and defanged forms.
+- Indicators expire 14 days after first seen. **Status** (CSV column) is
+  `active` or `expired` against the date the sheet is generated, not the
+  reporting window. An expired row keeps its place in the CSV, because it is
+  still useful for searching past logs, but its action becomes
+  `expired: retrospective log search only`, active rows sort first, and the
+  bulletin counts active indicators separately and says so on the cover when
+  none are left.
+- Text in the bulletin is defanged (`hxxp`, `[.]`); the CSV keeps both raw
+  and defanged forms.
 
 ---
 
-**Exports.** `python main.py export` writes the same indicators as a STIX 2.1
-bundle (validated with the OASIS `stix2` library during development) and a
-MISP event, with stable IDs, the CSV's roles, actions, confidence and expiry,
+**Exports.** `python main.py export` writes the active indicators as a STIX
+2.1 bundle (validated with the OASIS `stix2` library during development) and
+a MISP event, with stable IDs, the CSV's roles, actions, confidence and expiry,
 and TLP marking (public: TLP:WHITE / `tlp:clear`; internal: TLP:GREEN).
+Expired indicators are left out because both formats are loaded straight into
+detection; `--include-expired` keeps them, with MISP `to_ids` off.
 
 ---
 
 ## 9. Analyst-written content
 
 - **Threats in Focus** (`data/headline_threats.json`): incidents summarised
-  by the analyst from cited public reporting. They are shown with their
-  sources and never feed the scores.
+  by the analyst from cited public sources. They never feed the scores.
+  Each entry records its evidence, and the validator refuses an entry
+  without it:
+
+  | Field | Meaning |
+  |---|---|
+  | source `type` | `primary`: the affected vendor or organisation, a regulator or a government CERT; `research`: original technical analysis; `news`: reporting |
+  | source `published` | when the source was published, if known |
+  | source `retrieved` | when the analyst last confirmed the source supports the claim (at least one per entry) |
+  | `confidence` | `high` needs a primary source; `medium`: consistent research or reporting, no primary source located; `low`: a single report or unconfirmed claims |
+  | `last_verified`, `evidence` | when the entry was last checked, and one line on what is confirmed and by whom |
+
+  Each card prints these, tags every source with its type and dates, marks
+  sources not re-checked, and flags entries with no primary source. The
+  28 Oct 2026 verification corrected or trimmed eight of the thirteen entries
+  against their sources (for example, the edge-device entry was titled
+  "zero-days" although two of its four flaws were patched before any
+  exploitation, and claims no source could confirm were removed) and rated
+  one entry low.
 - **Hacktivist claims and dark web observations**
   (`data/hacktivist_claims.json`, `data/leak_observations.json`): claims are
   recorded as claims, with low default confidence unless verified.

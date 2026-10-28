@@ -26,10 +26,10 @@ import pymupdf
 
 from .bulletin_multi import extract_victim_attributions
 from .correlation import correlate
-from .iocs import get_ioc_summary, compute_file_sha256, extract_iocs, extract_host
+from .iocs import EXPIRED_ACTION, get_ioc_summary, compute_file_sha256, extract_iocs, extract_host
 from .scoring_multi import rank_sectors_multi, assign_risk_band
 from .sectors import sector_label
-from .headlines import load_headline_threats
+from .headlines import load_headline_threats, split_headlines
 from .signals import Signal, SignalType
 from .window import IST, is_builtin_anchor, window_end_date
 
@@ -179,6 +179,12 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
         assert s["risk_band"] == assign_risk_band(s["risk_score"]), (
             f"QA FAIL: Band label {s['risk_band']} does not match score {s['risk_score']} in {s['sector']}"
         )
+        # Activity excludes criticality: the published formula renormalised over the data components
+        activity = (0.30 * c["impact"] + 0.20 * c["exploit"] + 0.15 * c["infra"] +
+                    0.10 * c["pressure"] + 0.10 * c["exposure"]) / 0.85
+        assert abs(s["activity_score"] - activity) <= 0.2, (
+            f"QA FAIL: Activity divergence for {s['sector']}: {s['activity_score']} vs calc={activity:.1f}"
+        )
 
     # 4. IOC Attribution Reconciliation
     extracted_iocs = extract_iocs(signals, public_mode=public_mode)
@@ -229,7 +235,7 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
         csv_rows = list(csv.DictReader(f))
 
     if csv_rows:
-        for col in ("tld_country", "asn_country", "origin_hidden"):
+        for col in ("tld_country", "asn_country", "origin_hidden", "status", "expiry_date"):
             assert col in csv_rows[0], f"QA FAIL: Missing column '{col}' in CSV header"
 
         if public_mode:
@@ -237,7 +243,17 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
                 assert col in csv_rows[0], f"QA FAIL: Missing column '{col}' in CSV header for public mode"
 
         expected_dispute = os.getenv("DISPUTE_CONTACT_EMAIL", "").strip()
+        today = datetime.now(IST).date().isoformat()
         for r in csv_rows:
+            # Status is judged against the generation date; an expired row is never actionable
+            expected_status = "expired" if r["expiry_date"] and r["expiry_date"] < today else "active"
+            assert r["status"] == expected_status, (
+                f"QA FAIL: {r['host']} status '{r['status']}' but expiry {r['expiry_date']} vs generation {today}"
+            )
+            if r["status"] == "expired":
+                assert r["recommended_action"] == EXPIRED_ACTION, (
+                    f"QA FAIL: Expired indicator {r['host']} carries an active action: {r['recommended_action']}"
+                )
             assert r["asn"].strip() != "", f"QA FAIL: Empty ASN field for host {r['host']}"
             assert "/" not in r["asn"], f"QA FAIL: Merged label in ASN for host {r['host']}: {r['asn']}"
             if public_mode:
@@ -270,6 +286,8 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
                     f"QA FAIL: ThreatFox reference_url must be abuse.ch URL, got {r['reference_url']}"
                 )
 
+            if r["status"] == "expired":
+                continue
             if r["ioc_role"] in ("compromised_legitimate", "reported_compromised_by_feed", "unverified_delivery_host"):
                 assert "block" not in r["recommended_action"].lower(), (
                     f"QA FAIL: Forbidden 'block' action for non-phishing host {r['host']}: {r['recommended_action']}"
@@ -367,6 +385,12 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
         norm_title = " ".join(h["title"].split())
         assert norm_title in " ".join(full_pdf_text.split()), (
             f"QA FAIL: Headline threat '{h['id']}' missing from Threats in Focus")
+    # Every full card prints its evidence line with the recorded confidence
+    flat_text = " ".join(full_pdf_text.split())
+    for h in split_headlines(headlines)[0]:
+        evidence = " ".join(h["evidence"].split())[:60]
+        assert evidence in flat_text and f"{h['confidence'].capitalize()} confidence" in flat_text, (
+            f"QA FAIL: Evidence line for headline '{h['id']}' missing from its card")
 
     # Recompute companion CSV SHA-256 and compare to the hash printed in the
     # priority-signals section and the methodology appendix
@@ -476,10 +500,20 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
     norm_full = " ".join(full_pdf_text.split())
 
     # Statements the bulletin derives from data must match the same derivation here
-    from .bulletin_multi import compute_feed_provenance
-    due = (datetime.now(IST).date() + timedelta(days=7)).strftime("%d %b %Y")
-    for phrase in (compute_feed_provenance(signals)["currency_note"],
-                   f"Recommended target date: {due}"):
+    from .bulletin_multi import DATA_AGE_WARN_DAYS, _ioc_action_text, compute_feed_provenance
+    from .report_facts import fmt_date
+    gen_day = datetime.now(IST).date()
+    due = (gen_day + timedelta(days=7)).strftime("%d %b %Y")
+    provenance = compute_feed_provenance(signals)
+    ioc_now = get_ioc_summary(signals, public_mode=public_mode, as_of=gen_day)
+    derived = [provenance["currency_note"],
+               f"Recommended target date: {due}",
+               _ioc_action_text(ioc_now["total_indicators"], ioc_now["active_indicators"],
+                                ioc_now["expired_indicators"], fmt_date(ioc_now["latest_expiry"]))]
+    newest = max(provenance["raw_dates"].values(), default="")
+    if newest and (gen_day - datetime.fromisoformat(newest).date()).days > DATA_AGE_WARN_DAYS:
+        derived.append(f"Newest record {fmt_date(newest)}, {(gen_day - datetime.fromisoformat(newest).date()).days} days before this edition")
+    for phrase in derived:
         assert " ".join(phrase.split()) in norm_full, f"QA FAIL: Derived statement missing from PDF text: '{phrase}'"
 
     # Shared required architectural elements

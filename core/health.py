@@ -11,6 +11,10 @@ A feed is FAILING when its latest run returned nothing and logged errors,
 DEGRADED when it returned data but logged errors (retries, partial pages),
 STALE when its last good collection or newest record is older than the
 feed's expected cadence, and NOT COLLECTED when it has never run.
+
+A feed whose collector needs an API key that is not set here is NO KEY: it
+cannot refresh on this machine, which is a configuration choice rather than
+a fault, so it is shown (with its dates) but not counted as a problem.
 """
 
 import json
@@ -34,13 +38,12 @@ FEEDS: Dict[str, Dict] = {
     "otx":               {"source": "AlienVault OTX", "max_age_days": 14},
     "shodan_exposure":   {"source": "Shodan (aggregate counts)", "max_age_days": 14},
     "security_news":     {"source": None, "max_age_days": 3},
-    "india_threat_tracker": {"source": "India Threat Tracker", "max_age_days": 45},
     # Analyst-maintained files: freshness depends on the analyst, not a feed
     "hacktivism":        {"source": "Hacktivist claim tracking", "max_age_days": None},
     "leak_tracker":      {"source": None, "max_age_days": None},
 }
 
-STATUS_ORDER = ["FAILING", "STALE", "DEGRADED", "NOT COLLECTED", "OK", "MANUAL"]
+STATUS_ORDER = ["FAILING", "STALE", "DEGRADED", "NOT COLLECTED", "NO KEY", "OK", "MANUAL"]
 
 
 def _parse(ts: Optional[str]) -> Optional[datetime]:
@@ -57,11 +60,20 @@ def _age_days(ts: Optional[datetime], now: datetime) -> Optional[float]:
     return round((now - ts).total_seconds() / 86400, 1) if ts else None
 
 
+def missing_keys() -> Dict[str, List[str]]:
+    """Collector name -> API keys it needs that are not set in this environment."""
+    from .collectors import available_collectors
+    return {name: info["missing_env"] for name, info in available_collectors().items()
+            if info["missing_env"]}
+
+
 def source_health(now: Optional[datetime] = None, db_path: str = DEFAULT_DB,
-                  feeds: Optional[Dict[str, Dict]] = None) -> List[Dict]:
+                  feeds: Optional[Dict[str, Dict]] = None,
+                  missing_env: Optional[Dict[str, List[str]]] = None) -> List[Dict]:
     """One row per feed, worst status first."""
     now = now or datetime.now(timezone.utc)
     feeds = feeds or FEEDS
+    missing_env = missing_keys() if missing_env is None else missing_env
     with connect(db_path) as conn:
         runs = conn.execute(
             "SELECT collector, started_at, signals_seen, errors FROM collection_runs "
@@ -92,7 +104,9 @@ def source_health(now: Optional[datetime] = None, db_path: str = DEFAULT_DB,
         record_age = _age_days(newest_record, now)
         max_age = spec["max_age_days"]
 
-        if not history:
+        if missing_env.get(name):
+            status = "NO KEY"
+        elif not history:
             status = "NOT COLLECTED"
         elif max_age is None:
             status = "MANUAL"
@@ -116,7 +130,8 @@ def source_health(now: Optional[datetime] = None, db_path: str = DEFAULT_DB,
             "record_age_days": record_age,
             "max_age_days": max_age,
             "consecutive_failures": consecutive_failures,
-            "last_error": last_errors[-1][:160] if last_errors else "",
+            "last_error": (f"needs {', '.join(missing_env[name])}" if missing_env.get(name)
+                           else last_errors[-1][:160] if last_errors else ""),
         })
     rows.sort(key=lambda r: (STATUS_ORDER.index(r["status"]), r["collector"]))
     return rows

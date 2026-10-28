@@ -45,7 +45,7 @@ from .geo_india import classify_state, render_official_india_map, STATE_GEO_COOR
 from .overrides import entity_override
 from .health import problems as health_problems, source_health
 from .headlines import (brief_text, format_date, headline_keywords, load_headline_threats,
-                        news_watch, split_headlines)
+                        news_watch, NO_PRIMARY_NOTE, primary_sources, split_headlines)
 from .iocs import export_iocs_csv, extract_iocs, get_ioc_summary
 from . import report_facts as rf
 from .scoring_multi import DEFAULT_ANCHOR_DT, SCORING_VERSION, assign_risk_band
@@ -363,7 +363,7 @@ def create_sector_bar_chart(scored_sectors: List[Dict], width: float = 178 * mm,
     top_sectors = scored_sectors[:max_items]
     bar_height = 10.5
     gap = 5.5
-    header_height = 26
+    header_height = 34
     chart_height = header_height + len(top_sectors) * (bar_height + gap) + 6
     d = Drawing(width, chart_height)
 
@@ -375,6 +375,11 @@ def create_sector_bar_chart(scored_sectors: List[Dict], width: float = 178 * mm,
     d.add(String(12, chart_height - 17, "Sector Risk Score Comparison",
                  fontName="Helvetica-Bold", fontSize=9.0,
                  fillColor=NAVY))
+
+    d.add(String(12, chart_height - 27,
+                 "Bar: composite score (sets the order). Navy tick: activity score, observed activity only "
+                 "without the CII weight.", fontName="Helvetica", fontSize=6.2,
+                 fillColor=colors.HexColor("#555555")))
 
     # Legend badges (Synchronized with core/scoring_multi.py BANDS)
     legend = [
@@ -414,6 +419,9 @@ def create_sector_bar_chart(scored_sectors: List[Dict], width: float = 178 * mm,
         fill_w = max(4, min(bar_area_width, (score / 100.0) * bar_area_width))
         d.add(Rect(track_x, y, fill_w, bar_height, rx=2.5, ry=2.5,
                    fillColor=col, strokeColor=None))
+        if "activity_score" in s:
+            tick_x = track_x + min(bar_area_width, float(s["activity_score"]) / 100.0 * bar_area_width)
+            d.add(Rect(tick_x - 0.7, y - 1.5, 1.4, bar_height + 3, fillColor=NAVY, strokeColor=None))
 
         d.add(String(track_x + bar_area_width + 8, y + 2, f"{score:.1f}",
                      fontName="Helvetica-Bold", fontSize=7.5, fillColor=col))
@@ -713,8 +721,9 @@ def _backtest_limit_text() -> str:
                 "treat scores as unvalidated.")
     s = result["summary"]
     return (f"<b>Score Validation:</b> Backtested at {n} past dates against the next 30 days of leak-site victims, "
-            f"the ranking scored a mean Spearman correlation of {s['model']['spearman']} versus "
-            f"{s['recent_victims']['spearman']} for simply ranking by recent victims and 0 for random. "
+            f"the composite ranking scored a mean Spearman correlation of {s['model']['spearman']} and the activity "
+            f"score {s['model_no_cii']['spearman']}, versus {s['recent_victims']['spearman']} for simply ranking by "
+            f"recent victims and 0 for random, so neither is presented as a forecast. "
             f"Exploit, infrastructure, pressure and exposure components are not yet backtested for lack of history. "
             f"Method and results: METHODOLOGY.md.")
 
@@ -1214,6 +1223,19 @@ def create_regional_corridor_table(signals: List[Signal], st) -> Table:
                   zebra=True, padding=(1.6, 1.6, 2.5, 2.5))
 
 
+CONFIDENCE_HEX = {"high": "#2F855A", "medium": "#B7791F", "low": "#9B1C1C"}
+
+
+def _source_ref(src: Dict) -> str:
+    """A linked source name tagged with its type, publication and check dates."""
+    tags = [src.get("type", "")]
+    if src.get("published"):
+        tags.append(f"published {format_date(src['published'])}")
+    tags.append(f"checked {format_date(src['retrieved'])}" if src.get("retrieved") else "not re-checked")
+    return (f'<a href="{_esc(src["url"])}" color="#1E3A5F">{_esc(src["name"])}</a> '
+            f'<font color="#5B6573">[{_esc(", ".join(t for t in tags if t))}]</font>')
+
+
 def _headline_card(h: Dict, st) -> Table:
     """One headline threat as a card: severity strip, what happened, why it
     matters for India, what to do, references."""
@@ -1261,9 +1283,12 @@ def _headline_card(h: Dict, st) -> Table:
         refs.append("<b>CVEs:</b> " + _esc(", ".join(h["cves"])))
     if h.get("indicators"):
         refs.append("<b>Indicators:</b> " + _esc("; ".join(h["indicators"])))
-    links = "; ".join(f'<a href="{_esc(src["url"])}" color="#1E3A5F">{_esc(src["name"])}</a>'
-                      for src in h["sources"])
-    refs.append(f"<b>Sources:</b> {links}")
+    conf = h.get("confidence", "")
+    conf_hex = CONFIDENCE_HEX.get(conf, "#5B6573")
+    no_primary = "" if primary_sources(h) else f" <font color='#B45309'>{NO_PRIMARY_NOTE}</font>"
+    refs.append(f"<b>Evidence</b> (<font color='{conf_hex}'><b>{conf.capitalize()} confidence</b></font>, "
+                f"verified {format_date(h.get('last_verified', ''))}): {_esc(h.get('evidence', ''))}{no_primary}")
+    refs.append("<b>Sources:</b> " + "; ".join(_source_ref(src) for src in h["sources"]))
     inner.append(Spacer(1, 5))
     inner += [Paragraph(r, st["card_meta"]) for r in refs]
 
@@ -1287,17 +1312,20 @@ def _headline_index_table(entries: List[Dict], st) -> Table:
              Paragraph("<b>Incident</b>", st["cellb"]),
              Paragraph("<b>Type</b>", st["cellb"]),
              Paragraph("<b>Severity</b>", st["cellb"]),
+             Paragraph("<b>Confidence</b>", st["cellb"]),
              Paragraph("<b>India</b>", st["cellb"])]]
     for h in entries:
         sev_hex = SEVERITY_HEX.get(h["severity"], "#5B6573")
+        conf = h.get("confidence", "")
         rows.append([
             Paragraph(format_date(h["date"]), st["cell"]),
             Paragraph(_esc(h["title"].split(":")[0]), st["cell"]),
             Paragraph(_esc(h["category"]), st["cell"]),
             Paragraph(f'<font color="{sev_hex}"><b>{h["severity"]}</b></font>', st["cell"]),
+            Paragraph(f'<font color="{CONFIDENCE_HEX.get(conf, "#5B6573")}">{conf.capitalize()}</font>', st["cell"]),
             Paragraph("Direct" if h.get("india_direct") else "Broad", st["cell"]),
         ])
-    return _table(rows, [20 * mm, 78 * mm, 48 * mm, 16 * mm, 16 * mm], st, zebra=True,
+    return _table(rows, [20 * mm, 70 * mm, 40 * mm, 16 * mm, 18 * mm, 14 * mm], st, zebra=True,
                   padding=(1.6, 1.6, 3, 3))
 
 
@@ -1308,17 +1336,20 @@ def _headline_brief_table(entries: List[Dict], st) -> Table:
              Paragraph("<b>Sources</b>", st["cellb"])]]
     for h in entries:
         sev_hex = SEVERITY_HEX.get(h["severity"], "#5B6573")
-        links = "<br/>".join(f'<a href="{_esc(src["url"])}" color="#1E3A5F">{_esc(src["name"])}</a>'
+        links = "<br/>".join(f'<a href="{_esc(src["url"])}" color="#1E3A5F">{_esc(src["name"])}</a> '
+                             f'<font color="#5B6573">[{_esc(src.get("type", ""))}]</font>'
                              for src in h["sources"])
+        conf = h.get("confidence", "")
         rows.append([
             Paragraph(format_date(h["date"]), st["cell"]),
             Paragraph(f'<b>{_esc(h["title"])}</b><br/>'
                       f'<font color="{sev_hex}"><b>{h["severity"].upper()}</b></font> · '
+                      f'<font color="{CONFIDENCE_HEX.get(conf, "#5B6573")}">{conf.capitalize()} confidence</font> · '
                       f'{_esc(brief_text(h))}', st["cell"]),
             Paragraph(_esc(h["actions"][0]), st["cell"]),
             Paragraph(links, st["cell"]),
         ])
-    return _table(rows, [18 * mm, 78 * mm, 54 * mm, 28 * mm], st, zebra=True,
+    return _table(rows, [18 * mm, 74 * mm, 50 * mm, 36 * mm], st, zebra=True,
                   padding=(2.4, 2.4, 3, 3))
 
 
@@ -1504,6 +1535,23 @@ def compute_feed_provenance(signals: List[Signal]) -> Dict[str, Any]:
     }
 
 
+DATA_AGE_WARN_DAYS = 3  # the shortest feed cadence; older than this, nothing is arriving
+
+
+def _ioc_action_text(total: int, active: int, expired: int, latest_expiry: str) -> str:
+    """The P2 indicator action, worded for how many indicators are still active."""
+    if not total:
+        return "No indicators on Indian domains were reported in this window; keep the abuse.ch feeds configured."
+    if not active:
+        return (f"No indicator in the companion CSV is still active: all {total} expired by {latest_expiry}. "
+                f"Use them for retrospective log searches only, and refresh the feeds before loading "
+                f"indicators into firewalls or EDR.")
+    expired_note = f" ({expired} expired rows are marked in the CSV; leave them out)" if expired else ""
+    return (f"Ingest and monitor the {active} active malware delivery indicators and lookalike phishing "
+            f"domains{expired_note} in alert-first mode on perimeter firewalls and EDR before enforcing "
+            f"active blocking (see companion CSV).")
+
+
 def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
                          signals: List[Signal], correlation: Dict,
                          source_summary: List[Dict], window_days: int,
@@ -1532,7 +1580,13 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
 
     provenance_info = compute_feed_provenance(signals)
 
-    ioc_summary = get_ioc_summary(signals, public_mode=public_mode)
+    # Indicator status is judged against the day the bulletin is generated
+    gen_date = now_ist.date()
+    ioc_summary = get_ioc_summary(signals, public_mode=public_mode, as_of=gen_date,
+                                  recent_since=final_bucket["start_iso"])
+    active_iocs = ioc_summary.get("active_indicators", 0)
+    expired_iocs = ioc_summary.get("expired_indicators", 0)
+    latest_expiry_txt = rf.fmt_date(ioc_summary.get("latest_expiry", ""))
     ioc_first_min = ioc_summary.get("first_seen_min") or "n/a"
     ioc_first_max = ioc_summary.get("first_seen_max") or "n/a"
     surge_count = ioc_summary.get("ioc_window_recent_count", 0)
@@ -1582,10 +1636,13 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     technique_examples = rf.ioc_technique_examples(window_iocs)
     action_due = now_ist.date() + timedelta(days=7)
 
+    data_latest = max(provenance_info["raw_dates"].values(), default="")
+    data_age_days = ((gen_date - datetime.fromisoformat(data_latest).date()).days
+                     if data_latest else None)
+
     # =========================================================================
     # COVER: headline numbers, bottom line, sector picture
     # =========================================================================
-    gen_date = now_ist.date()
     headlines = load_headline_threats(start=start_date, end=max(gen_date, end_date))
     try:
         recent_news = get_intel_items((now - timedelta(days=14)).isoformat(), now.isoformat())
@@ -1606,13 +1663,27 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     except sqlite3.Error:
         health_rows = []
     health_bad = health_problems(health_rows)
+    health_no_key = [r for r in health_rows if r["status"] == "NO KEY"]
+
+    # One freshness block: data age, indicator expiry, feed health
+    fresh = []
+    if data_age_days is not None and data_age_days > DATA_AGE_WARN_DAYS:
+        fresh.append(f"Newest record {rf.fmt_date(data_latest)}, {data_age_days} days before this edition: "
+                     f"read counts and rankings as the picture to that date.")
+    if total_iocs and expired_iocs:
+        fresh.append(f"All {total_iocs} indicators have expired (the last on {latest_expiry_txt}); "
+                     f"use them for log searches only." if not active_iocs else
+                     f"{expired_iocs} of {total_iocs} indicators have expired (marked in the CSV).")
     if health_bad:
-        story.append(Paragraph(
-            f"<font color='#B45309'><b>Source health:</b> {len(health_bad)} of "
-            f"{sum(1 for r in health_rows if r['status'] != 'MANUAL')} feeds failing or stale when this "
-            f"report was generated ({_esc(', '.join(r['source'] for r in health_bad[:4]))}"
-            f"{', ...' if len(health_bad) > 4 else ''}). See the Source Health table in the Methodology section.</font>",
-            st["sub"]))
+        checked = sum(1 for r in health_rows if r["status"] not in ("MANUAL", "NO KEY"))
+        fresh.append(f"{len(health_bad)} of {checked} feeds failing or stale "
+                     f"({_esc(', '.join(r['source'] for r in health_bad[:3]))}{', ...' if len(health_bad) > 3 else ''})"
+                     + (f"; {len(health_no_key)} more need an API key" if health_no_key else "")
+                     + "; see Source Health under Methodology.")
+    if fresh:
+        lead = "Freshness warning:" if len(fresh) > 1 or not health_bad else "Source health:"
+        colour = "#9B1C1C" if lead == "Freshness warning:" else "#B45309"
+        story.append(Paragraph(f"<font color='{colour}'><b>{lead}</b> {' '.join(fresh)}</font>", st["sub"]))
     story.append(Spacer(1, 6))
 
     seen_multiple_count = correlation.get("corroborated_count", 0)
@@ -1667,8 +1738,12 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
                     f"Act first on: {named}{more}.")
     if scored_sectors:
         top = scored_sectors[0]
+        top_act = max(scored_sectors, key=lambda s: s.get("activity_score", 0.0))
+        act_txt = (f" On observed activity alone, {_esc(top_act['label'])} ranks first ({top_act['activity_score']:.1f})."
+                   if top_act["sector"] != top["sector"] else
+                   f" It also has the most observed activity ({top.get('activity_score', 0.0):.1f} without the CII weight).")
         bluf.append(f"<b>{_esc(top['label'])}</b> carries the highest composite risk score "
-                    f"({top['risk_score']:.1f}, {top['risk_band']}). "
+                    f"({top['risk_score']:.1f}, {top['risk_band']}).{act_txt} "
                     f"{critical_sectors} sector{'s rate' if critical_sectors != 1 else ' rates'} High or above.")
     if unique_orgs:
         org_word = "organisation was" if unique_orgs == 1 else "organisations were"
@@ -1679,8 +1754,8 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     n_infra = len(infra_signals)
     bluf.append(f"<b>{cisa_kev_count} actively exploited vulnerabilit{'y' if cisa_kev_count == 1 else 'ies'}</b> "
                 f"(CISA KEV) map to technology used in Indian enterprises, and {n_infra} malware and phishing "
-                f"infrastructure signal{'s' if n_infra != 1 else ''} yielded {total_iocs} indicator{'s' if total_iocs != 1 else ''} "
-                f"for alerting (see the companion IOC sheet).")
+                f"infrastructure signal{'s' if n_infra != 1 else ''} yielded {total_iocs} indicator{'s' if total_iocs != 1 else ''}"
+                + (f", {active_iocs} still active (see the companion IOC sheet)." if total_iocs else "."))
 
     bluf_box = Table([[[Paragraph("Bottom line", st["h3"])] +
                        [Paragraph(b, st["bluf"], bulletText="\u25A0") for b in bluf]]],
@@ -1852,6 +1927,10 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         driver_str = f" driven by {', '.join(drivers)}" if drivers else ""
         j3_parts.append(f"{s_lbl} leads the risk ranking ({s_score:.1f}, {s_band}){driver_str}" if not j3_parts else f"{s_lbl} ({s_score:.1f}, {s_band}){driver_str}")
 
+    by_activity = sorted(scored_sectors, key=lambda s: -s.get("activity_score", 0.0))
+    if by_activity and top3_secs and by_activity[0]["sector"] != top3_secs[0]["sector"]:
+        j3_parts.append(f"on observed activity alone, without the CII weight, {by_activity[0]['label']} ranks first "
+                        f"({by_activity[0]['activity_score']:.1f})")
     j3_desc = f"{'; '.join(j3_parts)}{sample_caveat}."
 
     # Judgement 4: how groups publish Indian victims
@@ -1948,7 +2027,7 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
          Paragraph("All Remote Users", st["cell"]),
          Paragraph("IAM / SecOps", st["cell"])],
         [Paragraph("<font color='#D35400'><b>P2: High</b></font>", st["cell"]),
-         Paragraph(f"Ingest and monitor {ioc_summary['total_indicators']} identified malware delivery indicators and lookalike phishing domains in alert-first mode on perimeter firewalls and EDR before enforcing active blocking (see companion CSV).", st["cell"]),
+         Paragraph(_ioc_action_text(total_iocs, active_iocs, expired_iocs, latest_expiry_txt), st["cell"]),
          Paragraph("DNS / Firewalls / EDR", st["cell"]),
          Paragraph("SOC / Threat Intel", st["cell"])],
         [Paragraph("<font color='#D35400'><b>P2: High</b></font>", st["cell"]),
@@ -2051,14 +2130,18 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     sec_no += 1
     story.append(_section_header("Sector Risk Ranking & Assessment Matrix", sec_no, st))
     story.append(Paragraph(
-        "Quantitative risk scoring across fourteen critical Indian industry sectors. Component scores reflect claimed victim impact (named on leak sites), "
-        "actively exploited sector CVEs, malicious C2 and phishing infrastructure, regulatory pressure, and Section 70A Critical Information Infrastructure (CII) designation.",
+        "Two scores per sector. <b>Activity</b> is observed threat activity in this window: claimed victim impact (named on leak sites), "
+        "actively exploited sector CVEs, malicious C2 and phishing infrastructure, campaign and hacktivist pressure, and exposure. "
+        "<b>Composite</b> adds a fixed weight for Section 70A Critical Information Infrastructure (CII) sectors and sets the ranking "
+        "order; that weight states priority, not activity. Neither score is a forecast: in backtests neither ranked next month's "
+        "leak-site victims better than counting recent victims (Methodology).",
         st["small"]))
     story.append(Spacer(1, 4))
 
     sec_rows = [[
         Paragraph("<b>Sector</b>", st["cellb"]),
-        Paragraph("<b>Score</b>", st["cellb"]),
+        Paragraph("<b>Activity</b>", st["cellb"]),
+        Paragraph("<b>Composite</b>", st["cellb"]),
         Paragraph("<b>Band</b>", st["cellb"]),
         Paragraph("<b>Postings (Orgs)</b>", st["cellb"]),
         Paragraph("<b>Vulnerabilities (KEV+NVD)</b>", st["cellb"]),
@@ -2071,7 +2154,8 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         band_str = assign_risk_band(s["risk_score"])
         sec_rows.append([
             Paragraph(_esc(s["label"]), st["cell"]),
-            Paragraph(f"<b>{s['risk_score']:.1f}</b>", st["cell"]),
+            Paragraph(f"{s.get('activity_score', 0.0):.1f}", st["cellc"]),
+            Paragraph(f"<b>{s['risk_score']:.1f}</b>", st["cellc"]),
             _band_text(band_str, st),
             Paragraph(f"{s['victim_count']} ({uniq_org_cnt})", st["cellc"]),
             Paragraph(str(s["exploited_cve_count"]), st["cellc"]),
@@ -2080,7 +2164,7 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
             Paragraph("<b>Yes</b>" if s["nciipc_critical"] else "-", st["cellc"]),
         ])
     story.append(_table(sec_rows,
-                        [42*mm, 11*mm, 23*mm, 21*mm, 28*mm, 21*mm, 16*mm, 16*mm],
+                        [41*mm, 13*mm, 15*mm, 18*mm, 17*mm, 23*mm, 27*mm, 13*mm, 11*mm],
                         st, zebra=True, padding=(1.6, 1.6, 2.2, 2.2)))
     story.append(Spacer(1, 4))
 
@@ -2117,6 +2201,7 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         Paragraph(
             f"<b>Mathematical Scoring Weights &amp; Normalisation Formula (Scoring Engine v{SCORING_VERSION}, data snapshot {snapshot_ts})</b><br/>"
             "<code>Risk Score = 0.30*Impact + 0.20*Exploit + 0.15*Infra + 0.15*Criticality(CII) + 0.10*Pressure + 0.10*Exposure</code><br/>"
+            "<code>Activity Score = (0.30*Impact + 0.20*Exploit + 0.15*Infra + 0.10*Pressure + 0.10*Exposure) / 0.85</code><br/>"
             "<i>Temporal Half-Life Decay:</i> Weight(t) = exp(-ln(2) * age / 21 days). "
             "<i>Risk Bands:</i> Critical (80+), High (60-79), Moderate (40-59), Low (20-39), Minimal (&lt;20).<br/>"
             f"<i>CVE-to-Sector Mapping &amp; Exposure Scoring:</i> {cve_mapping_rule_text}<br/>"
@@ -2180,7 +2265,7 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         story.append(Paragraph(
             f"<i>* Multi-Source Methodology &amp; Sector Mapping Rules: Threat telemetry is collected from {len(sources)} multi-source feeds. "
             f"CISA KEV and NVD share upstream CVE data, while ransomware.live and ransomlook.io track overlapping extortion leak sites; "
-            f"corroboration scoring adjusts for shared upstream parents without awarding artificial confidence uplifts. Out of {total_iocs} actionable domestic indicators across {unique_hosts} unique hosts, "
+            f"corroboration scoring adjusts for shared upstream parents without awarding artificial confidence uplifts. Out of {total_iocs} domestic indicators across {unique_hosts} unique hosts, "
             f"{attr_iocs_cnt} are attributed to specific sector technology stacks, while {unsec_iocs_cnt} represent unsectored domestic delivery infrastructure ({attr_iocs_cnt} + {unsec_iocs_cnt} = {total_iocs} total domestic threat indicators across {unique_hosts} unique hosts). "
             f"Sensitivity Analysis: Scores without the Delivery/Phishing Hosts (Infra) component were renormalised by dividing raw scores by 0.85 to rescale weights to 1.0: {sens_str}. "
             f"Rankings are sensitive to the Infra component (active delivery infrastructure). Scores can fall or rise when Infra is removed because Infra weight differs per sector. "
@@ -2486,7 +2571,9 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         f"{surge_count} of {total_iocs} indicators fell in the {final_dates} interval ({final_days} days). "
         f"BGP routing resolution reveals hosting across global infrastructure: {asn_dist_str}; threat classifications designate indicators as 'Indian' referring to the domain suffix (.in ccTLDs), not hosting location. "
         f"{_technique_sentence(technique_examples)}"
-        f"Network defenders should ingest these indicators in alert-first monitoring mode before active blocking.",
+        + (f"All of these indicators expired by {latest_expiry_txt}, so they serve retrospective log searches, not blocking."
+           if total_iocs and not active_iocs else
+           f"Network defenders should ingest the {active_iocs} active indicators in alert-first monitoring mode before active blocking."),
         st["body_justify"]))
     story.append(Spacer(1, 2.0))
     story.append(Paragraph(
@@ -2501,7 +2588,7 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     stamp = match.group(1) if match else end_date.strftime("%Y-%m-%d")
     csv_filename = f"IOCs_India_Threat_Landscape_Public_{stamp}.csv" if public_mode else f"IOCs_India_Threat_Landscape_Internal_{stamp}.csv"
     ioc_csv_path = os.path.join(os.path.dirname(output_path) or ".", csv_filename)
-    _, csv_hash = export_iocs_csv(signals, ioc_csv_path, public_mode=public_mode)
+    _, csv_hash = export_iocs_csv(signals, ioc_csv_path, public_mode=public_mode, as_of=gen_date)
 
     ioc_rows = [[
         Paragraph("<b>Defanged Indicator</b>", st["cellb"]),
@@ -2533,10 +2620,13 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
     feed_attribution_text = "abuse.ch ThreatFox and URLhaus (CC0 1.0 Universal)"
     story.append(Paragraph(
         f"<i>* Companion Artifact &amp; Integrity Hash: Complete machine-readable indicator set exported to companion artifact: "
-        f"<b>{csv_filename}</b> ({ioc_summary['total_indicators']} unique actionable indicators across {feed_attribution_text}). "
+        f"<b>{csv_filename}</b> ({total_iocs} indicators across {feed_attribution_text}; {active_iocs} active and "
+        f"{expired_iocs} expired on {gen_date.isoformat()}, see the status column). "
         f"SHA-256: <code>{csv_hash}</code>. India Relevance Criteria: Domestic indicators filtered to exact .in country-code top-level domains "
         f"(.in, .co.in, .gov.in, etc.); 'Indian' refers to the domain suffix, not hosting location. "
-        f"{asn_legend_str} Recommendation: Ingest in alert-first monitoring mode before active blocking.</i>",
+        f"{asn_legend_str} Recommendation: "
+        + ("ingest active rows in alert-first monitoring mode before active blocking; use expired rows only to search past logs.</i>"
+           if active_iocs else "use these expired rows only to search past logs; do not load them into blocking controls.</i>"),
         st["small"]))
 
     # =========================================================================
@@ -2796,10 +2886,11 @@ def build_multi_bulletin(output_path: str, scored_sectors: List[Dict],
         story.append(Paragraph("<b>Source Health at Generation</b>", st["h3"]))
         story.append(Paragraph(
             "Last collected is the last collector run that did not fail; newest record is the most recent item the feed "
-            "returned. A recently collected feed can still carry old records. Limits are the age after which a feed counts as stale.",
+            "returned. A recently collected feed can still carry old records. Limits are the age after which a feed counts as stale. "
+            "NO KEY means the collector needs an API key that was not set where this report was generated.",
             st["small"]))
         status_hex = {"OK": "#2F855A", "DEGRADED": "#B7791F", "STALE": "#C2410C", "FAILING": "#9B1C1C",
-                      "NOT COLLECTED": "#5B6573", "MANUAL": "#5B6573"}
+                      "NOT COLLECTED": "#5B6573", "NO KEY": "#5B6573", "MANUAL": "#5B6573"}
         h_rows = [[Paragraph(f"<b>{h}</b>", st["cellb"]) for h in
                    ("Feed", "Status", "Last collected", "Newest record", "Stale after")]]
         for r in health_rows:

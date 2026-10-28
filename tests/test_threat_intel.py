@@ -327,7 +327,7 @@ class TestBacktest(unittest.TestCase):
         self.assertGreater(s["model"]["spearman"], s["random"]["spearman"])
 
 
-class TestExportsAndTrackerCollector(unittest.TestCase):
+class TestExports(unittest.TestCase):
     IOCS = [
         {"indicator": "bad.example.in", "defanged": "bad[.]example[.]in", "type": "domain",
          "ioc_role": "compromised_legitimate", "technique": "ClickFix", "malware_family": "",
@@ -376,33 +376,18 @@ class TestExportsAndTrackerCollector(unittest.TestCase):
         self.assertEqual(event["distribution"], "3")
         self.assertTrue(all(a["to_ids"] for a in event["Attribute"]))
 
-    def test_tracker_parser(self):
-        from core.collectors.india_threat_tracker import parse_tracker
-        apt = {"items": [
-            {"id": "apt-x", "actor": "Transparent Tribe", "status": "active", "confidence": "high",
-             "summary": "Espionage against Indian government using spear-phishing.", "targets": ["indian-government", "education"],
-             "known_tools": ["Crimson RAT"], "last_updated": "2026-10-15", "india_relevance": "high",
-             "sources": [{"title": "Vendor report", "url": "https://vendor.test/report"}]},
-            {"id": "apt-old", "actor": "Old Group", "status": "historical", "summary": "x"}]}
-        smishing = {"items": [
-            {"id": "sm-1", "title": "Fake RTO APK", "status": "active", "confidence": "medium",
-             "summary": "Steals UPI PIN.", "targets": ["UPI customers"], "last_updated": "2026-10-16"}]}
-        csv_text = ("indicator,type,campaign_id,campaign,confidence,source,source_url,source_checked,status\n"
-                    "evil[.]example,domains,sm-1,Fake RTO APK,high,src,https://s.test,2026-10-20,as reported\n"
-                    "ABCDEF,sha256,sm-1,Fake RTO APK,high,src,https://s.test,2026-10-20,as reported\n")
-        sigs = parse_tracker(apt, smishing, csv_text)
-        self.assertEqual(len(sigs), 2)  # historical record skipped
-        apt_sig, sm_sig = sigs
-        self.assertEqual(apt_sig.signal_type, SignalType.RESEARCH)
-        self.assertEqual(apt_sig.sectors, ["EDUCATION", "GOVERNMENT"])
-        self.assertEqual(apt_sig.entities.actors, ["Transparent Tribe"])
-        self.assertEqual(apt_sig.confidence, 0.8)
-        self.assertEqual(apt_sig.source_url, "https://vendor.test/report")
-        self.assertIn("CC BY 4.0", apt_sig.raw["license"])
-        self.assertEqual(sm_sig.sectors, ["BFSI"])
-        self.assertEqual(sm_sig.entities.domains, ["evil.example"])
-        self.assertEqual(sm_sig.entities.hashes, ["abcdef"])
-        self.assertEqual(sm_sig.observed_at, "2026-10-16T00:00:00+00:00")
+    def test_expired_indicators_left_out(self):
+        from core.export import to_misp_event, to_stix_bundle
+        iocs = [dict(self.IOCS[0], status="expired"), dict(self.IOCS[1], status="active")]
+        bundle = to_stix_bundle(iocs, "Analyst")
+        patterns = [o["pattern"] for o in bundle["objects"] if o["type"] == "indicator"]
+        self.assertEqual(len(patterns), 1)
+        self.assertTrue(patterns[0].startswith("[url:"))
+        attrs = to_misp_event(iocs, "Analyst", event_date="2026-10-28")["Event"]["Attribute"]
+        self.assertEqual([a["type"] for a in attrs], ["url"])
+        # Kept on request, but never marked for detection
+        attrs = to_misp_event(iocs, "Analyst", event_date="2026-10-28", include_expired=True)["Event"]["Attribute"]
+        self.assertEqual({a["type"]: a["to_ids"] for a in attrs}, {"domain": False, "url": True})
 
 
 class TestScoring(unittest.TestCase):
@@ -418,6 +403,18 @@ class TestScoring(unittest.TestCase):
         # Should not raise ZeroDivisionError when cap is zero
         score = score_sector_multi("BFSI", [sig], caps={"impact": 0.0})
         self.assertIsInstance(score["risk_score"], float)
+
+    def test_activity_score_leaves_out_criticality(self):
+        sig = Signal(signal_type=SignalType.VICTIM, title="Victim", source="Test",
+                     observed_at="2026-10-09T00:00:00Z", india_relevance=1.0, sectors=["BFSI"])
+        caps = {"impact": sig.risk_contribution}
+        cii = score_sector_multi("BFSI", [sig], caps=caps)          # Section 70A sector
+        other = score_sector_multi("RETAIL", [sig], caps=caps)
+        # Same evidence, same activity; only the composite carries the CII weight
+        self.assertEqual(cii["activity_score"], other["activity_score"])
+        self.assertGreater(cii["risk_score"], other["risk_score"])
+        expected = cii["components"]["impact"] * 0.30 / 0.85
+        self.assertAlmostEqual(cii["activity_score"], expected, places=1)
 
     def test_rank_sectors_multi(self):
         sig = Signal(
@@ -461,7 +458,7 @@ class TestIOCManagement(unittest.TestCase):
         self.assertFalse(any(i["host"].endswith(".in.ua") for i in iocs))
         # Ensure all 50 IOCs have non-empty ASN
         self.assertTrue(all(len(i["asn"].strip()) > 0 for i in iocs))
-        summary = get_ioc_summary(sigs)
+        summary = get_ioc_summary(sigs, as_of="2026-10-11", recent_since="2026-10-07")
         self.assertEqual(summary["total_indicators"], 50)
         self.assertEqual(summary["unique_hosts"], 43)
         # Compromise status comes from the feed's own is_compromised flag
@@ -469,6 +466,27 @@ class TestIOCManagement(unittest.TestCase):
         self.assertEqual(summary["unverified_hosts"], 8)
         self.assertEqual(summary["phishing_hosts"], 0)
         self.assertEqual(summary["ioc_window_recent_count"], 23)
+        self.assertEqual(summary["active_indicators"], 50)
+
+    def test_ioc_expiry_against_generation_date(self):
+        from core.iocs import EXPIRED_ACTION, extract_iocs, get_ioc_summary, ioc_status
+        self.assertEqual(ioc_status("2026-10-24", "2026-10-24"), "active")
+        self.assertEqual(ioc_status("2026-10-24", "2026-10-25"), "expired")
+        self.assertEqual(ioc_status("", "2026-10-25"), "active")
+        sigs = [Signal.from_row(r) for r in db.get_signals(days=60)]
+        # Generated 28 Oct over data ending 10 Oct: every indicator has expired
+        iocs = extract_iocs(sigs, as_of="2026-10-28")
+        self.assertTrue(all(i["status"] == "expired" for i in iocs))
+        self.assertTrue(all(i["recommended_action"] == EXPIRED_ACTION for i in iocs))
+        summary = get_ioc_summary(sigs, as_of="2026-10-28")
+        self.assertEqual((summary["active_indicators"], summary["expired_indicators"]), (0, 50))
+        self.assertEqual(summary["latest_expiry"], "2026-10-24")
+        # Part-way through, active indicators sort ahead of expired ones
+        mixed = extract_iocs(sigs, as_of="2026-10-20")
+        statuses = [i["status"] for i in mixed]
+        self.assertIn("expired", statuses)
+        self.assertEqual(statuses, sorted(statuses))
+        self.assertTrue(all(i["expiry_date"] >= "2026-10-20" for i in mixed if i["status"] == "active"))
 
     def test_scoring_determinism(self):
         sigs = [Signal.from_row(r) for r in db.get_signals(days=60)]
@@ -718,6 +736,7 @@ class TestSourceHealthAndValidation(unittest.TestCase):
             "flaky":         {"source": "Flaky Feed", "max_age_days": 3},
             "never":         {"source": "Never Feed", "max_age_days": 3},
             "manual":        {"source": None, "max_age_days": None},
+            "keyed":         {"source": "Keyed Feed", "max_age_days": 3},
         }
         self._run("ok_feed", "2026-10-27T01:00:00+00:00", 5)
         self._signal("OK Feed", "2026-10-26T00:00:00+00:00")
@@ -728,7 +747,11 @@ class TestSourceHealthAndValidation(unittest.TestCase):
         self._run("flaky", "2026-10-27T01:00:00+00:00", 5, ["HTTP 503 (attempt 1/3)"])
         self._signal("Flaky Feed", "2026-10-26T00:00:00+00:00")
         self._run("manual", "2026-10-01T01:00:00+00:00", 0)
-        rows = {r["collector"]: r for r in source_health(now=now, db_path=self.db_path, feeds=feeds)}
+        # Collected once with a key, which this machine no longer has
+        self._run("keyed", "2026-10-01T01:00:00+00:00", 5)
+        self._signal("Keyed Feed", "2026-09-30T00:00:00+00:00")
+        rows = {r["collector"]: r for r in source_health(now=now, db_path=self.db_path, feeds=feeds,
+                                                         missing_env={"keyed": ["KEYED_API_KEY"]})}
         self.assertEqual(rows["ok_feed"]["status"], "OK")
         self.assertEqual(rows["old_records"]["status"], "STALE")  # fresh run, old data
         self.assertEqual(rows["broken"]["status"], "FAILING")
@@ -736,6 +759,10 @@ class TestSourceHealthAndValidation(unittest.TestCase):
         self.assertEqual(rows["flaky"]["status"], "DEGRADED")
         self.assertEqual(rows["never"]["status"], "NOT COLLECTED")
         self.assertEqual(rows["manual"]["status"], "MANUAL")
+        self.assertEqual(rows["keyed"]["status"], "NO KEY")
+        self.assertEqual(rows["keyed"]["newest_record"], "2026-09-30")
+        self.assertEqual(rows["keyed"]["last_error"], "needs KEYED_API_KEY")
+        # Unconfigured feeds are not failures
         self.assertEqual({r["collector"] for r in problems(list(rows.values()))}, {"old_records", "broken"})
 
     def test_bundled_data_files_are_valid(self):
@@ -804,7 +831,10 @@ class TestHeadlineThreats(unittest.TestCase):
             "id": "t1", "title": "Test incident: detail", "category": "Data breach",
             "severity": "High", "date": "2026-10-21", "summary": "What happened.",
             "actions": ["Do the thing."],
-            "sources": [{"name": "Test", "url": "https://news.test/1"}],
+            "sources": [{"name": "Test", "url": "https://news.test/1", "type": "news",
+                         "published": "2026-10-21", "retrieved": "2026-10-22"}],
+            "confidence": "medium", "last_verified": "2026-10-22",
+            "evidence": "Reported by one outlet.",
         }
         entry.update(overrides)
         return entry
@@ -826,6 +856,31 @@ class TestHeadlineThreats(unittest.TestCase):
         problems = " ".join(validate_headline(bad))
         for needle in ("actions", "severity", "date", "source"):
             self.assertIn(needle, problems)
+
+    def test_evidence_rules(self):
+        from core.headlines import primary_sources, validate_headline
+        primary = {"name": "Vendor advisory", "url": "https://vendor.test/a", "type": "primary",
+                   "published": "2026-10-20", "retrieved": "2026-10-22"}
+        # High confidence needs a primary source
+        self.assertIn("confidence 'high' needs a primary source",
+                      validate_headline(self._entry(confidence="high")))
+        self.assertEqual(validate_headline(self._entry(confidence="high",
+                                                       sources=[primary])), [])
+        # At least one source must have been checked
+        unchecked = dict(primary, retrieved="")
+        self.assertTrue(any("retrieved" in p for p in
+                            validate_headline(self._entry(sources=[unchecked]))))
+        bad = self._entry(confidence="certain", last_verified="yesterday",
+                          sources=[dict(primary, type="blog", published="Oct 20")])
+        problems = " ".join(validate_headline(bad))
+        for needle in ("confidence 'certain'", "last_verified", "type must be", "published"):
+            self.assertIn(needle, problems)
+        missing = self._entry()
+        del missing["evidence"]
+        self.assertIn("missing 'evidence'", validate_headline(missing))
+        # Cards flag entries that nothing primary backs
+        self.assertEqual(primary_sources(self._entry()), [])
+        self.assertEqual(primary_sources(self._entry(sources=[primary])), [primary])
 
     def test_load_filters_by_date_and_sorts_by_severity(self):
         import json

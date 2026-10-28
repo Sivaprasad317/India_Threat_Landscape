@@ -2,11 +2,10 @@
 Multi-source sector risk scoring.
 
 The single-source version scored on victim counts alone. This version reads
-every signal type, which changes the answer in ways that matter:
-
-  A sector with no victims but an actively exploited edge-device CVE and
-  rising phishing infrastructure is a sector about to have victims. The
-  old model scored it Minimal.
+every signal type, so a sector with no leak-site victims but an actively
+exploited edge-device CVE and rising phishing infrastructure is no longer
+scored Minimal. Whether those components anticipate victims is not yet
+tested (METHODOLOGY.md, section 7).
 
 Six components:
 
@@ -20,6 +19,14 @@ Six components:
 Each component is built from signals, and every signal carries its own
 india_relevance and confidence, so weak evidence contributes weakly rather
 than counting the same as a confirmed breach.
+
+Two numbers per sector, because they answer different questions:
+
+  activity_score  observed threat activity: the five data components only,
+                  weights renormalised to sum to 1
+  risk_score      the published composite: activity plus a fixed
+                  criticality weight for Section 70A sectors, a statement
+                  of priority rather than of activity
 """
 
 import json
@@ -55,6 +62,15 @@ COMPONENT_TYPES = {
                  SignalType.ADVISORY},
     "exposure": {SignalType.EXPOSURE},
 }
+
+ACTIVITY_COMPONENTS = [c for c in COMPONENT_WEIGHTS if c != "criticality"]
+
+
+def activity_score(components: Dict[str, float]) -> float:
+    """Observed-activity score: the data components, criticality left out."""
+    total_w = sum(COMPONENT_WEIGHTS[c] for c in ACTIVITY_COMPONENTS)
+    return sum(components.get(c, 0.0) * COMPONENT_WEIGHTS[c] / total_w for c in ACTIVITY_COMPONENTS)
+
 
 BANDS = [(80, "Critical"), (60, "High"), (40, "Moderate"),
          (20, "Low"), (0, "Minimal")]
@@ -122,6 +138,7 @@ def score_sector_multi(sector: str, signals: List[Signal],
 
     total = sum(components[c] * COMPONENT_WEIGHTS[c] for c in COMPONENT_WEIGHTS)
     band = next(name for threshold, name in BANDS if total >= threshold)
+    activity = activity_score(components)
 
     victims = by_component.get("impact", [])
     victim_pairs = []
@@ -162,6 +179,8 @@ def score_sector_multi(sector: str, signals: List[Signal],
         "label": sector_label(sector),
         "risk_score": round(total, 1),
         "risk_band": band,
+        "activity_score": round(activity, 1),
+        "activity_band": assign_risk_band(activity),
         "components": components,
         "signal_count": len(signals),
         "victim_count": sum(1 for s in signals

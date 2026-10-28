@@ -21,8 +21,8 @@ python main.py sources
 
 `sources` shows which collectors can run now and which need a key.
 
-**Eleven collectors work with no key at all.** Get the free abuse.ch and OTX
-keys and you are at fifteen; Shodan (paid) makes sixteen.
+**Ten collectors work with no key at all.** Get the free abuse.ch and OTX
+keys and you are at fourteen; Shodan (paid) makes fifteen.
 
 ---
 
@@ -40,7 +40,6 @@ keys and you are at fifteen; Shodan (paid) makes sixteen.
 | `hacktivism` | Hacktivist claims against Indian targets | none |
 | `leak_tracker` | Your dark web forum observations | none |
 | `security_news` | Security news headlines naming India or high-impact events | none |
-| `india_threat_tracker` | APT and UPI-smishing campaigns from [India Threat Tracker](https://github.com/sohankanna/india-threat-tracker) (CC BY 4.0, Sohan Kanna) | none |
 | `threatfox` | Malware C2 on Indian infrastructure | abuse.ch (free) |
 | `urlhaus` | Payload URLs on Indian hosts | abuse.ch (free) |
 | `malwarebazaar` | Samples from India-targeting families | abuse.ch (free) |
@@ -72,7 +71,10 @@ python main.py export --format both --public   # STIX 2.1 + MISP JSON
 ```
 
 Run `collect` daily, `bulletin` weekly. `health` before a bulletin tells you
-whether any feed is failing or stale; the bulletin repeats it on the cover.
+whether any feed is failing or stale; the bulletin repeats it on the cover,
+along with how old the newest record is and how many indicators are still
+active. A feed whose API key is not set shows as NO KEY and is not counted
+as a failure.
 
 ### What the bulletin contains
 
@@ -105,7 +107,10 @@ set `SCORING_ANCHOR` in `.env` to an ISO timestamp (naive = IST) or `now`.
 
 ## How the score is built, and how far to trust it
 
-Each sector gets a 0-100 score from six components:
+Each sector gets two 0-100 scores: a **composite** from the six components
+below, which sets the ranking, and an **activity** score from the five data
+components alone (criticality left out, weights rescaled), which shows how
+much the data actually saw. The bulletin prints both.
 
 | Component | Weight | Measures |
 |---|---|---|
@@ -127,13 +132,15 @@ leak-site victims. On the bundled data (24 monthly anchors):
 | Ranking | Spearman rho | Next-month victims in its top 3 |
 |---|---|---|
 | This model | 0.53 | 48% |
-| This model without criticality | 0.61 | 59% |
+| Activity score (no criticality weight) | 0.61 | 59% |
 | Ranking by recent victims only | 0.62 | 59% |
 | Random | 0.00 | 21% |
 
-Rankings are well above random, but the criticality weight costs predictive
-agreement: it deliberately lifts critical sectors that see fewer leak-site
-postings. The exploit, infra, pressure and exposure components have no
+Rankings are well above random, but none beats counting recent victims, so
+the bulletin makes no forecasting claim. The criticality weight lifts CII
+sectors that see fewer leak-site postings; it is a statement of priority, so
+the bulletin shows each sector's activity score (no criticality) next to the
+composite. The exploit, infra, pressure and exposure components have no
 stored history before late August 2026 and are not yet tested; the daily
 scheduled run builds that history. Details and a recommendation:
 [METHODOLOGY.md](METHODOLOGY.md#7-has-the-score-been-tested),
@@ -204,8 +211,23 @@ the 7-day action plan.
  "owner": "Web / Infra teams",
  "summary": "What happened...", "india_impact": "Why it matters...",
  "actions": ["First thing to do...", "..."], "indicators": [],
- "sources": [{"name": "Recorded Future", "url": "https://..."}]}
+ "confidence": "high", "last_verified": "2026-10-28",
+ "evidence": "What the best source confirms, and what is still unverified.",
+ "sources": [{"name": "Canadian Centre for Cyber Security AL26-026",
+              "url": "https://...", "type": "primary",
+              "published": "", "retrieved": "2026-10-28"}]}
 ```
+
+**Evidence is required.** Each source has a `type`: `primary` (the affected
+vendor or organisation, a regulator, a government CERT), `research` (original
+technical analysis) or `news`, plus `published` and `retrieved` dates (leave
+one empty when unknown; `retrieved` is when you last confirmed the source
+supports the claim). `confidence` is `high` only with a primary source;
+`medium` for consistent research or reporting without one; `low` for a single
+report or unconfirmed claims. At least one source must carry a `retrieved`
+date. Every card prints its confidence, verification date and evidence note,
+tags each source with its type and dates, and flags entries with no primary
+source. Re-verify before each edition and update `last_verified`.
 
 `severity` is Critical, High, Medium or Low. Set `"india_direct": true` when
 the incident hit an Indian organisation or came from CERT-In; those entries and
@@ -272,7 +294,7 @@ Run `python main.py validate` after editing; CI runs it on every push.
 every day at 06:47 IST: it collects every feed, builds the public (TLP:CLEAR)
 bulletin and IOC sheet, uploads them as a run artifact (Actions tab, open the
 run, Artifacts), and fails, so GitHub emails you, when a feed is failing or
-stale. The signal database is carried between runs in the Actions cache. Add
+stale (feeds without a key are skipped, not failed). The signal database is carried between runs in the Actions cache. Add
 `ABUSECH_AUTH_KEY` and `OTX_API_KEY` under Settings, Secrets and variables,
 Actions to enable those feeds. Scheduled workflows run from the `main` branch.
 
@@ -293,7 +315,9 @@ builds a sample bulletin on every push (Python 3.10 and 3.12).
 `python main.py export --format both [--public]` writes the IOC sheet as a
 STIX 2.1 bundle and a MISP event to `exports/`. Roles, recommended actions,
 confidence and 14-day expiry match the CSV; IDs are stable across runs so
-platforms update rather than duplicate. Public edition is marked TLP:WHITE
+platforms update rather than duplicate. Both formats are for loading into
+detection, so **expired indicators are left out**; `--include-expired` keeps
+them for a historical export, and MISP then marks them `to_ids: false`. Public edition is marked TLP:WHITE
 (STIX 2.1's built-in marking, the TLP 2.0 CLEAR equivalent) and `tlp:clear`
 in MISP; internal is TLP:GREEN.
 
