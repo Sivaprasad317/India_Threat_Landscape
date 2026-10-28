@@ -390,6 +390,35 @@ class TestExports(unittest.TestCase):
         self.assertEqual({a["type"]: a["to_ids"] for a in attrs}, {"domain": False, "url": True})
 
 
+class TestKEVCollector(unittest.TestCase):
+    def test_collects_recent_entries_and_tags_edge_devices(self):
+        import asyncio
+        from core.collectors.vulns import EPSS_URL, KEV_URL, CISAKEVCollector
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        kev = {"vulnerabilities": [
+            {"cveID": "CVE-2026-0001", "vendorProject": "Ivanti", "product": "Connect Secure",
+             "vulnerabilityName": "Command injection", "shortDescription": "x", "dateAdded": today,
+             "knownRansomwareCampaignUse": "Unknown", "requiredAction": "Patch"},
+            {"cveID": "CVE-2026-0002", "vendorProject": "Microsoft", "product": "Windows",
+             "vulnerabilityName": "Bypass", "shortDescription": "y", "dateAdded": today,
+             "knownRansomwareCampaignUse": "Known", "requiredAction": "Patch"},
+            {"cveID": "CVE-2020-0003", "vendorProject": "Old", "product": "Thing",
+             "vulnerabilityName": "Old", "shortDescription": "z", "dateAdded": "2020-01-01"},
+        ]}
+
+        async def fake_get_json(client, url, **kwargs):
+            return kev if url == KEV_URL else {"data": []} if url == EPSS_URL else None
+
+        collector = CISAKEVCollector(days=30)
+        collector.get_json = fake_get_json
+        sigs = asyncio.run(collector.collect())
+        by_cve = {s.entities.cves[0]: s for s in sigs}
+        self.assertEqual(sorted(by_cve), ["CVE-2026-0001", "CVE-2026-0002"])
+        self.assertIn("edge-device", by_cve["CVE-2026-0001"].tags)
+        self.assertNotIn("edge-device", by_cve["CVE-2026-0002"].tags)
+        self.assertEqual(by_cve["CVE-2026-0002"].severity, Severity.CRITICAL)
+
+
 class TestScoring(unittest.TestCase):
     def test_scoring_multi_zero_cap_guard(self):
         sig = Signal(

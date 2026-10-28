@@ -16,6 +16,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List
 
+from ..report_facts import is_edge_product
 from ..signals import Entities, Severity, Signal, SignalType, now_iso
 from .base import BaseCollector, register
 
@@ -152,7 +153,7 @@ class CISAKEVCollector(BaseCollector):
                 tags = ["kev", "actively-exploited"]
                 if ransomware_use.lower() == "known":
                     tags.append("ransomware-campaign-use")
-                if any(t in blob.lower() for t in UNIVERSAL_EDGE):
+                if is_edge_product(vendor, product):
                     tags.append("edge-device")
 
                 signals.append(Signal(
