@@ -327,7 +327,7 @@ class TestBacktest(unittest.TestCase):
         self.assertGreater(s["model"]["spearman"], s["random"]["spearman"])
 
 
-class TestExportsAndTrackerCollector(unittest.TestCase):
+class TestExports(unittest.TestCase):
     IOCS = [
         {"indicator": "bad.example.in", "defanged": "bad[.]example[.]in", "type": "domain",
          "ioc_role": "compromised_legitimate", "technique": "ClickFix", "malware_family": "",
@@ -375,34 +375,6 @@ class TestExportsAndTrackerCollector(unittest.TestCase):
         self.assertEqual(event["Tag"][0]["name"], "tlp:clear")
         self.assertEqual(event["distribution"], "3")
         self.assertTrue(all(a["to_ids"] for a in event["Attribute"]))
-
-    def test_tracker_parser(self):
-        from core.collectors.india_threat_tracker import parse_tracker
-        apt = {"items": [
-            {"id": "apt-x", "actor": "Transparent Tribe", "status": "active", "confidence": "high",
-             "summary": "Espionage against Indian government using spear-phishing.", "targets": ["indian-government", "education"],
-             "known_tools": ["Crimson RAT"], "last_updated": "2026-10-15", "india_relevance": "high",
-             "sources": [{"title": "Vendor report", "url": "https://vendor.test/report"}]},
-            {"id": "apt-old", "actor": "Old Group", "status": "historical", "summary": "x"}]}
-        smishing = {"items": [
-            {"id": "sm-1", "title": "Fake RTO APK", "status": "active", "confidence": "medium",
-             "summary": "Steals UPI PIN.", "targets": ["UPI customers"], "last_updated": "2026-10-16"}]}
-        csv_text = ("indicator,type,campaign_id,campaign,confidence,source,source_url,source_checked,status\n"
-                    "evil[.]example,domains,sm-1,Fake RTO APK,high,src,https://s.test,2026-10-20,as reported\n"
-                    "ABCDEF,sha256,sm-1,Fake RTO APK,high,src,https://s.test,2026-10-20,as reported\n")
-        sigs = parse_tracker(apt, smishing, csv_text)
-        self.assertEqual(len(sigs), 2)  # historical record skipped
-        apt_sig, sm_sig = sigs
-        self.assertEqual(apt_sig.signal_type, SignalType.RESEARCH)
-        self.assertEqual(apt_sig.sectors, ["EDUCATION", "GOVERNMENT"])
-        self.assertEqual(apt_sig.entities.actors, ["Transparent Tribe"])
-        self.assertEqual(apt_sig.confidence, 0.8)
-        self.assertEqual(apt_sig.source_url, "https://vendor.test/report")
-        self.assertIn("CC BY 4.0", apt_sig.raw["license"])
-        self.assertEqual(sm_sig.sectors, ["BFSI"])
-        self.assertEqual(sm_sig.entities.domains, ["evil.example"])
-        self.assertEqual(sm_sig.entities.hashes, ["abcdef"])
-        self.assertEqual(sm_sig.observed_at, "2026-10-16T00:00:00+00:00")
 
 
 class TestScoring(unittest.TestCase):

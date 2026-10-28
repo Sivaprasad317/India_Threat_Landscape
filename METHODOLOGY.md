@@ -33,7 +33,6 @@ named organisation, or legal advice on CERT-In reporting.
 | `crtsh_typosquat` | Lookalike domains for Indian brands | crt.sh | 14 days |
 | `otx` | Campaign reporting naming India | AlienVault OTX | 14 days |
 | `shodan_exposure` | Aggregate Indian attack-surface counts (no host lists) | Shodan | 14 days |
-| `india_threat_tracker` | Curated APT and UPI-smishing campaigns (CC BY 4.0, Sohan Kanna) as campaign reporting | India Threat Tracker | 45 days |
 | `security_news` | News headlines (kept out of scoring) | n/a | 3 days |
 | `hacktivism`, `leak_tracker` | Analyst-logged claims from `data/*.json` | analyst | manual |
 

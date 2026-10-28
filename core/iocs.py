@@ -185,7 +185,6 @@ FEED_LICENSES: Dict[str, str] = {
     "CERT-In Advisories": "Public Government Advisory",
     "ransomware.live": "Public Extortion Tracker",
     "ransomlook.io": "Public Extortion Tracker",
-    "India Threat Tracker": "CC BY 4.0 (Sohan Kanna, india-threat-tracker)",
 }
 
 

@@ -21,8 +21,8 @@ python main.py sources
 
 `sources` shows which collectors can run now and which need a key.
 
-**Eleven collectors work with no key at all.** Get the free abuse.ch and OTX
-keys and you are at fifteen; Shodan (paid) makes sixteen.
+**Ten collectors work with no key at all.** Get the free abuse.ch and OTX
+keys and you are at fourteen; Shodan (paid) makes fifteen.
 
 ---
 
@@ -40,7 +40,6 @@ keys and you are at fifteen; Shodan (paid) makes sixteen.
 | `hacktivism` | Hacktivist claims against Indian targets | none |
 | `leak_tracker` | Your dark web forum observations | none |
 | `security_news` | Security news headlines naming India or high-impact events | none |
-| `india_threat_tracker` | APT and UPI-smishing campaigns from [India Threat Tracker](https://github.com/sohankanna/india-threat-tracker) (CC BY 4.0, Sohan Kanna) | none |
 | `threatfox` | Malware C2 on Indian infrastructure | abuse.ch (free) |
 | `urlhaus` | Payload URLs on Indian hosts | abuse.ch (free) |
 | `malwarebazaar` | Samples from India-targeting families | abuse.ch (free) |
