@@ -211,8 +211,23 @@ the 7-day action plan.
  "owner": "Web / Infra teams",
  "summary": "What happened...", "india_impact": "Why it matters...",
  "actions": ["First thing to do...", "..."], "indicators": [],
- "sources": [{"name": "Recorded Future", "url": "https://..."}]}
+ "confidence": "high", "last_verified": "2026-10-28",
+ "evidence": "What the best source confirms, and what is still unverified.",
+ "sources": [{"name": "Canadian Centre for Cyber Security AL26-026",
+              "url": "https://...", "type": "primary",
+              "published": "", "retrieved": "2026-10-28"}]}
 ```
+
+**Evidence is required.** Each source has a `type`: `primary` (the affected
+vendor or organisation, a regulator, a government CERT), `research` (original
+technical analysis) or `news`, plus `published` and `retrieved` dates (leave
+one empty when unknown; `retrieved` is when you last confirmed the source
+supports the claim). `confidence` is `high` only with a primary source;
+`medium` for consistent research or reporting without one; `low` for a single
+report or unconfirmed claims. At least one source must carry a `retrieved`
+date. Every card prints its confidence, verification date and evidence note,
+tags each source with its type and dates, and flags entries with no primary
+source. Re-verify before each edition and update `last_verified`.
 
 `severity` is Critical, High, Medium or Low. Set `"india_direct": true` when
 the incident hit an Indian organisation or came from CERT-In; those entries and

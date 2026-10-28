@@ -264,8 +264,25 @@ detection; `--include-expired` keeps them, with MISP `to_ids` off.
 ## 9. Analyst-written content
 
 - **Threats in Focus** (`data/headline_threats.json`): incidents summarised
-  by the analyst from cited public reporting. They are shown with their
-  sources and never feed the scores.
+  by the analyst from cited public sources. They never feed the scores.
+  Each entry records its evidence, and the validator refuses an entry
+  without it:
+
+  | Field | Meaning |
+  |---|---|
+  | source `type` | `primary`: the affected vendor or organisation, a regulator or a government CERT; `research`: original technical analysis; `news`: reporting |
+  | source `published` | when the source was published, if known |
+  | source `retrieved` | when the analyst last confirmed the source supports the claim (at least one per entry) |
+  | `confidence` | `high` needs a primary source; `medium`: consistent research or reporting, no primary source located; `low`: a single report or unconfirmed claims |
+  | `last_verified`, `evidence` | when the entry was last checked, and one line on what is confirmed and by whom |
+
+  Each card prints these, tags every source with its type and dates, marks
+  sources not re-checked, and flags entries with no primary source. The
+  28 Oct 2026 verification corrected or trimmed eight of the thirteen entries
+  against their sources (for example, the edge-device entry was titled
+  "zero-days" although two of its four flaws were patched before any
+  exploitation, and claims no source could confirm were removed) and rated
+  one entry low.
 - **Hacktivist claims and dark web observations**
   (`data/hacktivist_claims.json`, `data/leak_observations.json`): claims are
   recorded as claims, with low default confidence unless verified.

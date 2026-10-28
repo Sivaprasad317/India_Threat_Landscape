@@ -45,7 +45,7 @@ from .geo_india import classify_state, render_official_india_map, STATE_GEO_COOR
 from .overrides import entity_override
 from .health import problems as health_problems, source_health
 from .headlines import (brief_text, format_date, headline_keywords, load_headline_threats,
-                        news_watch, split_headlines)
+                        news_watch, NO_PRIMARY_NOTE, primary_sources, split_headlines)
 from .iocs import export_iocs_csv, extract_iocs, get_ioc_summary
 from . import report_facts as rf
 from .scoring_multi import DEFAULT_ANCHOR_DT, SCORING_VERSION, assign_risk_band
@@ -1223,6 +1223,19 @@ def create_regional_corridor_table(signals: List[Signal], st) -> Table:
                   zebra=True, padding=(1.6, 1.6, 2.5, 2.5))
 
 
+CONFIDENCE_HEX = {"high": "#2F855A", "medium": "#B7791F", "low": "#9B1C1C"}
+
+
+def _source_ref(src: Dict) -> str:
+    """A linked source name tagged with its type, publication and check dates."""
+    tags = [src.get("type", "")]
+    if src.get("published"):
+        tags.append(f"published {format_date(src['published'])}")
+    tags.append(f"checked {format_date(src['retrieved'])}" if src.get("retrieved") else "not re-checked")
+    return (f'<a href="{_esc(src["url"])}" color="#1E3A5F">{_esc(src["name"])}</a> '
+            f'<font color="#5B6573">[{_esc(", ".join(t for t in tags if t))}]</font>')
+
+
 def _headline_card(h: Dict, st) -> Table:
     """One headline threat as a card: severity strip, what happened, why it
     matters for India, what to do, references."""
@@ -1270,9 +1283,12 @@ def _headline_card(h: Dict, st) -> Table:
         refs.append("<b>CVEs:</b> " + _esc(", ".join(h["cves"])))
     if h.get("indicators"):
         refs.append("<b>Indicators:</b> " + _esc("; ".join(h["indicators"])))
-    links = "; ".join(f'<a href="{_esc(src["url"])}" color="#1E3A5F">{_esc(src["name"])}</a>'
-                      for src in h["sources"])
-    refs.append(f"<b>Sources:</b> {links}")
+    conf = h.get("confidence", "")
+    conf_hex = CONFIDENCE_HEX.get(conf, "#5B6573")
+    no_primary = "" if primary_sources(h) else f" <font color='#B45309'>{NO_PRIMARY_NOTE}</font>"
+    refs.append(f"<b>Evidence</b> (<font color='{conf_hex}'><b>{conf.capitalize()} confidence</b></font>, "
+                f"verified {format_date(h.get('last_verified', ''))}): {_esc(h.get('evidence', ''))}{no_primary}")
+    refs.append("<b>Sources:</b> " + "; ".join(_source_ref(src) for src in h["sources"]))
     inner.append(Spacer(1, 5))
     inner += [Paragraph(r, st["card_meta"]) for r in refs]
 
@@ -1296,17 +1312,20 @@ def _headline_index_table(entries: List[Dict], st) -> Table:
              Paragraph("<b>Incident</b>", st["cellb"]),
              Paragraph("<b>Type</b>", st["cellb"]),
              Paragraph("<b>Severity</b>", st["cellb"]),
+             Paragraph("<b>Confidence</b>", st["cellb"]),
              Paragraph("<b>India</b>", st["cellb"])]]
     for h in entries:
         sev_hex = SEVERITY_HEX.get(h["severity"], "#5B6573")
+        conf = h.get("confidence", "")
         rows.append([
             Paragraph(format_date(h["date"]), st["cell"]),
             Paragraph(_esc(h["title"].split(":")[0]), st["cell"]),
             Paragraph(_esc(h["category"]), st["cell"]),
             Paragraph(f'<font color="{sev_hex}"><b>{h["severity"]}</b></font>', st["cell"]),
+            Paragraph(f'<font color="{CONFIDENCE_HEX.get(conf, "#5B6573")}">{conf.capitalize()}</font>', st["cell"]),
             Paragraph("Direct" if h.get("india_direct") else "Broad", st["cell"]),
         ])
-    return _table(rows, [20 * mm, 78 * mm, 48 * mm, 16 * mm, 16 * mm], st, zebra=True,
+    return _table(rows, [20 * mm, 70 * mm, 40 * mm, 16 * mm, 18 * mm, 14 * mm], st, zebra=True,
                   padding=(1.6, 1.6, 3, 3))
 
 
@@ -1317,17 +1336,20 @@ def _headline_brief_table(entries: List[Dict], st) -> Table:
              Paragraph("<b>Sources</b>", st["cellb"])]]
     for h in entries:
         sev_hex = SEVERITY_HEX.get(h["severity"], "#5B6573")
-        links = "<br/>".join(f'<a href="{_esc(src["url"])}" color="#1E3A5F">{_esc(src["name"])}</a>'
+        links = "<br/>".join(f'<a href="{_esc(src["url"])}" color="#1E3A5F">{_esc(src["name"])}</a> '
+                             f'<font color="#5B6573">[{_esc(src.get("type", ""))}]</font>'
                              for src in h["sources"])
+        conf = h.get("confidence", "")
         rows.append([
             Paragraph(format_date(h["date"]), st["cell"]),
             Paragraph(f'<b>{_esc(h["title"])}</b><br/>'
                       f'<font color="{sev_hex}"><b>{h["severity"].upper()}</b></font> · '
+                      f'<font color="{CONFIDENCE_HEX.get(conf, "#5B6573")}">{conf.capitalize()} confidence</font> · '
                       f'{_esc(brief_text(h))}', st["cell"]),
             Paragraph(_esc(h["actions"][0]), st["cell"]),
             Paragraph(links, st["cell"]),
         ])
-    return _table(rows, [18 * mm, 78 * mm, 54 * mm, 28 * mm], st, zebra=True,
+    return _table(rows, [18 * mm, 74 * mm, 50 * mm, 36 * mm], st, zebra=True,
                   padding=(2.4, 2.4, 3, 3))
 
 

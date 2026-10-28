@@ -831,7 +831,10 @@ class TestHeadlineThreats(unittest.TestCase):
             "id": "t1", "title": "Test incident: detail", "category": "Data breach",
             "severity": "High", "date": "2026-10-21", "summary": "What happened.",
             "actions": ["Do the thing."],
-            "sources": [{"name": "Test", "url": "https://news.test/1"}],
+            "sources": [{"name": "Test", "url": "https://news.test/1", "type": "news",
+                         "published": "2026-10-21", "retrieved": "2026-10-22"}],
+            "confidence": "medium", "last_verified": "2026-10-22",
+            "evidence": "Reported by one outlet.",
         }
         entry.update(overrides)
         return entry
@@ -853,6 +856,31 @@ class TestHeadlineThreats(unittest.TestCase):
         problems = " ".join(validate_headline(bad))
         for needle in ("actions", "severity", "date", "source"):
             self.assertIn(needle, problems)
+
+    def test_evidence_rules(self):
+        from core.headlines import primary_sources, validate_headline
+        primary = {"name": "Vendor advisory", "url": "https://vendor.test/a", "type": "primary",
+                   "published": "2026-10-20", "retrieved": "2026-10-22"}
+        # High confidence needs a primary source
+        self.assertIn("confidence 'high' needs a primary source",
+                      validate_headline(self._entry(confidence="high")))
+        self.assertEqual(validate_headline(self._entry(confidence="high",
+                                                       sources=[primary])), [])
+        # At least one source must have been checked
+        unchecked = dict(primary, retrieved="")
+        self.assertTrue(any("retrieved" in p for p in
+                            validate_headline(self._entry(sources=[unchecked]))))
+        bad = self._entry(confidence="certain", last_verified="yesterday",
+                          sources=[dict(primary, type="blog", published="Oct 20")])
+        problems = " ".join(validate_headline(bad))
+        for needle in ("confidence 'certain'", "last_verified", "type must be", "published"):
+            self.assertIn(needle, problems)
+        missing = self._entry()
+        del missing["evidence"]
+        self.assertIn("missing 'evidence'", validate_headline(missing))
+        # Cards flag entries that nothing primary backs
+        self.assertEqual(primary_sources(self._entry()), [])
+        self.assertEqual(primary_sources(self._entry(sources=[primary])), [primary])
 
     def test_load_filters_by_date_and_sorts_by_severity(self):
         import json

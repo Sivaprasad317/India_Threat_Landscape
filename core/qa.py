@@ -29,7 +29,7 @@ from .correlation import correlate
 from .iocs import EXPIRED_ACTION, get_ioc_summary, compute_file_sha256, extract_iocs, extract_host
 from .scoring_multi import rank_sectors_multi, assign_risk_band
 from .sectors import sector_label
-from .headlines import load_headline_threats
+from .headlines import load_headline_threats, split_headlines
 from .signals import Signal, SignalType
 from .window import IST, is_builtin_anchor, window_end_date
 
@@ -385,6 +385,12 @@ def _perform_audit(signals: List[Signal], scored_sectors: List[Dict],
         norm_title = " ".join(h["title"].split())
         assert norm_title in " ".join(full_pdf_text.split()), (
             f"QA FAIL: Headline threat '{h['id']}' missing from Threats in Focus")
+    # Every full card prints its evidence line with the recorded confidence
+    flat_text = " ".join(full_pdf_text.split())
+    for h in split_headlines(headlines)[0]:
+        evidence = " ".join(h["evidence"].split())[:60]
+        assert evidence in flat_text and f"{h['confidence'].capitalize()} confidence" in flat_text, (
+            f"QA FAIL: Evidence line for headline '{h['id']}' missing from its card")
 
     # Recompute companion CSV SHA-256 and compare to the hash printed in the
     # priority-signals section and the methodology appendix

@@ -23,7 +23,7 @@
     ],
     "scope": "Websites and PHP servers",
     "owner": "Web / Infra teams",
-    "summary": "Two flaws in PHP core allow unauthenticated remote code execution: CVE-2026-109618 (memory corruption during request start-up) and CVE-2026-109619 (use-after-free). PHP rates both 9.2 on CVSS v4.0. The bugs are in the interpreter itself, so exposure does not depend on the CMS or framework: PHP-FPM, Apache mod_php, php-cgi, FrankenPHP and LiteSpeed deployments are all in scope. Amazon reported an exploitation attempt against its honeypots on 17 Oct, four days before patches shipped, and Cloudflare counted millions of attempts by 22 Oct. Successful real-world compromise was still unverified as of 23 Oct.",
+    "summary": "Two flaws in PHP core allow unauthenticated remote code execution: CVE-2026-109618 (memory corruption during request start-up) and CVE-2026-109619 (use-after-free). PHP rates both 9.2 on CVSS v4.0. The bugs are in the interpreter itself, so exposure does not depend on the CMS or framework: PHP-FPM, Apache mod_php, php-cgi, FrankenPHP and LiteSpeed deployments are all in scope. Amazon's honeypots logged a first exploitation attempt on 17 Oct, four days before the patches shipped and while the bugs were under embargo; Amazon later described broad exploitation attempts. The PHP security team said proofs of concept published before the patches did not work, and no successful compromise of a real system had been reported as of 28 Oct.",
     "india_impact": "Government (.gov.in, .nic.in), university and small-business portals often run on shared hosting with older PHP branches. PHP 8.1 and older get no official fix, so legacy portals are the most exposed. A defaced or web-shelled portal is reportable to CERT-In within 6 hours under the 2022 Directions.",
     "actions": [
       "Upgrade to PHP 8.5.12, 8.4.27, 8.3.36 or 8.2.35 and restart every PHP worker (FPM pools, Apache, LiteSpeed).",
@@ -34,23 +34,38 @@
     "indicators": [],
     "sources": [
       {
-        "name": "Recorded Future",
-        "url": "https://www.recordedfuture.com/blog/php2shell-vulnerability-exploitation"
+        "name": "Canadian Centre for Cyber Security AL26-026",
+        "url": "https://cyber.gc.ca/en/alerts-advisories/al26-026-critical-vulnerabilities-impacting-php-cve-2026-109618-cve-2026-109619",
+        "type": "primary",
+        "published": "",
+        "retrieved": "2026-10-28"
       },
       {
-        "name": "BleepingComputer",
-        "url": "https://bleepingcomputer.com/news/security/amazon-says-php2shell-exploitation-began-4-days-before-patches"
+        "name": "BleepingComputer (Amazon findings)",
+        "url": "https://bleepingcomputer.com/news/security/amazon-says-php2shell-exploitation-began-4-days-before-patches",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
       },
       {
-        "name": "Security Affairs",
-        "url": "https://securityaffairs.com/?p=201538"
+        "name": "SecurityWeek",
+        "url": "https://securityweek.com/php2shell-exploitation-started-days-before-patches",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
       },
       {
-        "name": "Tanium",
-        "url": "https://www.tanium.com/blog/php2shell-responding-to-cve-2026-109618-and-cve-2026-109619"
+        "name": "Sophos",
+        "url": "https://www.sophos.com/blog/proof-of-concept-exploit-released-for-php-vulnerabilities-109618-109619",
+        "type": "research",
+        "published": "",
+        "retrieved": "2026-10-28"
       }
     ],
-    "india_direct": false
+    "india_direct": false,
+    "confidence": "high",
+    "evidence": "The two CVEs, PHP's CVSS 9.2 rating and the fixed releases are confirmed by the Canadian Centre for Cyber Security alert AL26-026. Exploitation timing rests on Amazon Threat Intelligence as reported by BleepingComputer and SecurityWeek; Amazon's own post was not located.",
+    "last_verified": "2026-10-28"
   },
   {
     "id": "litellm-2026-10",
@@ -69,7 +84,7 @@
     ],
     "scope": "CI/CD, developer machines, containers",
     "owner": "DevOps / AppSec",
-    "summary": "On 21 Oct 2026 attackers published litellm 1.107.0 to PyPI and to the official Docker images (tags v1.107.0, latest, main-latest, main-stable). It was live for about two hours (11:39 to 13:20 UTC on PyPI). The release drops cook.pth, cook.py and sitecustomize.py into site-packages; these run every time Python starts, even if LiteLLM is never imported. They steal cloud, Kubernetes, Vault, SSH, Git, npm/PyPI and AI-tool credentials, .env files and browser data, and add a backdoor that polls for remote code. Per LiteLLM's analysis the attackers used stolen GitHub CLI OAuth tokens from three engineers to run the release workflow against a look-alike fork. This is the second LiteLLM compromise this year (1.82.7 and 1.82.8 in March, attributed to TeamPCP); no link between the two has been established.",
+    "summary": "On 21 Oct 2026 attackers published litellm 1.107.0 to PyPI and to the official Docker images (tags v1.107.0, latest, main-latest, main-stable). It was live for about two hours (11:39 to 13:23 UTC on PyPI; Docker tags until about 14:20 UTC). The release drops cook.pth, cook.py and sitecustomize.py into site-packages; these run every time Python starts, even if LiteLLM is never imported. They steal cloud, AI-provider, SSH and Git credentials among others and add a remote code loader. LiteLLM's incident report, as quoted in press coverage, attributes the release to stolen GitHub OAuth tokens belonging to three maintainers. An earlier compromise this year hit versions 1.82.7 and 1.82.8; Datadog found no link between the two.",
     "india_impact": "Indian IT services firms, GCCs and AI start-ups that build on LLM APIs are the likely exposure. Any CI runner, developer laptop or container that pulled 1.107.0 or the :latest image during the window should be treated as compromised. The stolen keys typically reach cloud accounts and client environments, which turns one infected build server into a supplier-side breach.",
     "actions": [
       "Search lockfiles, CI logs, container registries and pip caches for litellm 1.107.0 and for images pulled by the latest or main-* tags on 21 Oct.",
@@ -86,14 +101,37 @@
     "sources": [
       {
         "name": "Datadog Security Labs",
-        "url": "https://securitylabs.datadoghq.com/articles/litellm-compromised-pypi-docker/"
+        "url": "https://securitylabs.datadoghq.com/articles/litellm-compromised-pypi-docker/",
+        "type": "research",
+        "published": "",
+        "retrieved": "2026-10-28"
       },
       {
-        "name": "Datadog Security Labs (March incident)",
-        "url": "https://securitylabs.datadoghq.com/articles/litellm-compromised-pypi-teampcp-supply-chain-campaign/"
+        "name": "Socket",
+        "url": "https://socket.dev/blog/litellm-compromise",
+        "type": "research",
+        "published": "",
+        "retrieved": "2026-10-28"
+      },
+      {
+        "name": "Wiz",
+        "url": "https://www.wiz.io/blog/litellm-compromised-steals-credentials",
+        "type": "research",
+        "published": "",
+        "retrieved": "2026-10-28"
+      },
+      {
+        "name": "BleepingComputer",
+        "url": "https://www.bleepingcomputer.com/news/security/litellm-release-pipeline-hacked-to-distribute-info-stealer-malware/",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
       }
     ],
-    "india_direct": false
+    "india_direct": false,
+    "confidence": "medium",
+    "evidence": "Package contents and timeline come from independent analyses of the malicious release by Datadog Security Labs, Socket and Wiz. LiteLLM's own incident report is quoted in press coverage but was not located, so the entry is not rated high.",
+    "last_verified": "2026-10-28"
   },
   {
     "id": "sbi-2026-10",
@@ -113,7 +151,7 @@
     ],
     "scope": "Customer channels and fraud controls",
     "owner": "Fraud / SOC",
-    "summary": "State Bank of India told the stock exchanges on 21 Oct 2026 that it was alerted on 16 Oct by its threat intelligence provider and CERT-In to customer data on the dark web. A review of about 3.75 lakh records found 3,897 SBI customer records with personal information: names, mobile numbers, dates of birth, gender, email and postal addresses, branch and CIF identifiers; leaked samples were mostly loan records with KYC fields. A group calling itself Siriusim had claimed on BreachForums to hold 3.75 lakh records and 2,722 PDF documents; SBI's filing does not name the group and the document claim is unverified. SBI says banking operations and customer funds are unaffected and has engaged a CERT-In-empanelled agency to find the source.",
+    "summary": "State Bank of India told the stock exchanges on 21 Oct 2026 that it was alerted on 16 Oct by its threat intelligence provider, the Defence Cyber Agency and CERT-In to customer data on the dark web. A review of about 3.75 lakh records found 3,897 SBI customer records with personal information: names, mobile numbers, dates of birth, gender, email and postal addresses, branch and CIF identifiers; leaked samples were mostly loan records with KYC fields. A group calling itself Siriusim had claimed on BreachForums to hold 3.75 lakh records and 2,722 PDF documents; SBI's filing does not name the group and the document claim is unverified. SBI says banking operations and customer funds are unaffected and has engaged a CERT-In-empanelled agency to find the source.",
     "india_impact": "CIF numbers and loan details make bank-impersonation calls, SMS and WhatsApp messages far more convincing. Expect SBI-themed phishing, fake KYC-update and loan-related fraud aimed at customers, and new SBI lookalike domains. Other banks and NBFCs should expect the same playbook against their own customers.",
     "actions": [
       "Banks and NBFCs: brief contact-centre and fraud teams; add friction to SIM-swap, mobile-number change and device re-binding requests.",
@@ -125,30 +163,51 @@
     "sources": [
       {
         "name": "SBI exchange filing (NSE)",
-        "url": "https://nsearchives.nseindia.com/corporate/SBIN_21102026084938_BSE_NSE_21102026.pdf"
-      },
-      {
-        "name": "The Hacker News",
-        "url": "https://thehackernews.com/2026/10/state-bank-of-india-confirms-data-leak.html"
-      },
-      {
-        "name": "CRN Asia",
-        "url": "https://www.crnasia.com/india/news/2026/india-s-largest-public-sector-bank-sbi-probes-data-loss-after-3-897-customer-records-surface-on-dark-web"
+        "url": "https://nsearchives.nseindia.com/corporate/SBIN_21102026084938_BSE_NSE_21102026.pdf",
+        "type": "primary",
+        "published": "2026-10-21",
+        "retrieved": ""
       },
       {
         "name": "DT Next / IANS",
-        "url": "https://www.dtnext.in/news/business/sbi-data-breach-psu-bank-confirms-3897-customer-records-exposed-on-dark-web"
+        "url": "https://www.dtnext.in/news/business/sbi-data-breach-psu-bank-confirms-3897-customer-records-exposed-on-dark-web",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
       },
       {
-        "name": "Free Press Journal",
-        "url": "https://www.freepressjournal.in/tech/who-is-siriusim-the-little-known-hacker-group-allegedly-behind-the-sbi-data-leak"
+        "name": "YourStory",
+        "url": "https://yourstory.com/2026/10/sbi-3897-customer-records-personal-data-dark-web-hacker-leak-claim",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
+      },
+      {
+        "name": "Moneylife",
+        "url": "https://www.moneylife.in/article/sbi-data-leak-3897-customer-records-found-in-preliminary-analysis-iff-says-customers-not-informed/81988.html",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
+      },
+      {
+        "name": "CyberPeace Foundation",
+        "url": "https://cyberpeace.org/resources/blogs/sbi-data-leak-what-we-know-what-we-do-not-and-what-customers-should-do",
+        "type": "research",
+        "published": "",
+        "retrieved": "2026-10-28"
       },
       {
         "name": "Internet Freedom Foundation",
-        "url": "https://internetfreedom.in/sbi-told-investors-its-data-breach-doesnt-matter-what-about-the-3-897-customers-it-affected/"
+        "url": "https://internetfreedom.in/sbi-told-investors-its-data-breach-doesnt-matter-what-about-the-3-897-customers-it-affected/",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
       }
     ],
-    "india_direct": true
+    "india_direct": true,
+    "confidence": "high",
+    "evidence": "SBI's stock-exchange filing of 21 Oct is the primary source; its content (3,897 records, fields, alert date, investigating agency) is quoted consistently by DT Next, YourStory and Moneylife. The filing itself could not be opened from the build environment. The Siriusim claim and the 2,722 PDF figure come from the seller's post and remain unverified.",
+    "last_verified": "2026-10-28"
   },
   {
     "id": "certin-ciad-2026-0046",
@@ -181,26 +240,38 @@
     "indicators": [],
     "sources": [
       {
+        "name": "CERT-In CIAD-2026-0046",
+        "url": "https://www.cert-in.org.in/s2cMainServlet?pageid=PUBVLNOTES02&VLCODE=CIAD-2026-0046",
+        "type": "primary",
+        "published": "2026-10-09",
+        "retrieved": "2026-10-28"
+      },
+      {
+        "name": "safeguard.sh",
+        "url": "https://safeguard.sh/resources/blog/cert-in-ciad-2026-0046-payment-api-fund-transfer-attacks",
+        "type": "research",
+        "published": "",
+        "retrieved": "2026-10-28"
+      },
+      {
         "name": "MediaNama",
-        "url": "https://www.medianama.com/2026/10/223-hackers-kyc-api-hijacks-cert-in-fintechs/"
-      },
-      {
-        "name": "Digital Terminal",
-        "url": "https://digitalterminal.in/trending/cert-in-warns-nbfcs-and-fintech-firms-of-cyberattacks-targeting-fintech-payment-infrastructure"
-      },
-      {
-        "name": "VARindia",
-        "url": "https://www.varindia.com/news/cert-in-warns-fintechs-and-nbfcs-of-api-attacks-driving-illegal-fund-transfers"
+        "url": "https://www.medianama.com/2026/10/223-hackers-kyc-api-hijacks-cert-in-fintechs/",
+        "type": "news",
+        "published": "",
+        "retrieved": ""
       }
-    ]
+    ],
+    "confidence": "high",
+    "evidence": "CERT-In advisory CIAD-2026-0046 ('Threat Actors Exploiting Payment and Disbursement APIs for Unauthorized Fund Transfers in BFSI Entities', 9 Oct 2026) was collected by this platform's CERT-In feed and is listed on the CERT-In site. The attack-chain detail is as summarised by MediaNama and safeguard.sh; the advisory names no product or CVE.",
+    "last_verified": "2026-10-28"
   },
   {
     "id": "edge-zero-days-2026-10",
-    "title": "Edge and remote-access zero-days: SonicWall, Ivanti, BeyondTrust and Palo Alto under attack",
+    "title": "Edge and remote-access flaws under attack: SonicWall, Ivanti, BeyondTrust and Palo Alto",
     "category": "Exploited vulnerabilities",
     "severity": "Critical",
     "date": "2026-10-16",
-    "status": "Patches available. Exploitation confirmed or attempted for each product",
+    "status": "Patches available. Exploitation confirmed by Ivanti, BeyondTrust and Palo Alto; reported by researchers for SonicWall",
     "india_direct": false,
     "india_link": "Broad: these appliances front VPN and remote access for many Indian banks, IT firms and government offices",
     "sectors": [
@@ -225,7 +296,7 @@
     ],
     "scope": "VPN, remote-support and edge appliances",
     "owner": "Network / SysAdmin",
-    "summary": "Four remote-access products came under attack this month. SonicWall SMA1000: CVE-2026-102255, a CVSS 10.0 pre-authentication SSRF in the Work Place interface, patched 6 Oct with exploitation attempts from 8 Oct. Ivanti Connect Secure: CVE-2026-104935, added to CISA's exploited-vulnerabilities catalogue on 13 Oct. BeyondTrust Remote Support and Privileged Remote Access: CVE-2026-102764 (CVSS 9.3), exploited as a zero-day since 29 Aug by a suspected China-nexus espionage group (ARMORY CASTLE) for root access, credential theft and log deletion, and added to CISA KEV on 16 Oct. Palo Alto PAN-OS GlobalProtect: CVE-2026-0257, exploited since May, is now used by ransomware groups including Qilin and Settra to open VPN sessions (reported 21 Oct).",
+    "summary": "Four remote-access products came under attack this month. SonicWall SMA1000: CVE-2026-102255, a CVSS 10.0 pre-authentication SSRF in the Work Place interface, patched 6 Oct; SonicWall reported no exploitation at release, and Security Affairs and SOCRadar later reported exploitation attempts, including against honeypots. Ivanti Connect Secure: CVE-2026-104935 (CVSS 8.6, unauthenticated command execution), exploited as a zero-day before Ivanti's 13 Oct advisory and added to CISA KEV the same day; Volexity tracks the actor as UTA0576. BeyondTrust Remote Support: CVE-2026-102764 (CVSS 9.3), exploited as a zero-day since 29 Aug and attributed by Google Threat Intelligence to ARMORY CASTLE, a suspected China-nexus espionage group; added to CISA KEV on 16 Oct. Palo Alto PAN-OS GlobalProtect: CVE-2026-0257, patched in May and in CISA KEV since 29 May, is used by ransomware affiliates to open VPN sessions; ReliaQuest linked October activity to Qilin and Settra.",
     "india_impact": "Edge appliances are already the leading exploited-vulnerability family in this bulletin's telemetry (see the Executive Summary). One unpatched VPN or remote-support box is enough for ransomware crews and state actors, and patching alone does not remove an attacker who got in first.",
     "actions": [
       "Patch SonicWall SMA1000, Ivanti Connect Secure, BeyondTrust RS/PRA and PAN-OS GlobalProtect now; apply vendor mitigations where you cannot.",
@@ -236,22 +307,65 @@
     "indicators": [],
     "sources": [
       {
-        "name": "SecurityWeek (SonicWall)",
-        "url": "https://www.securityweek.com/critical-sonicwall-vulnerability-exploited-days-after-disclosure/"
+        "name": "Singapore CSA AL-2026-137 (SonicWall)",
+        "url": "https://www.csa.gov.sg/alerts-and-advisories/alerts/al-2026-137/",
+        "type": "primary",
+        "published": "",
+        "retrieved": "2026-10-28"
       },
       {
-        "name": "CyberMaxx (Ivanti)",
-        "url": "https://www.cybermaxx.com/resources/security-advisory-weekly-advisory-october-14th-2026/"
+        "name": "Security Affairs (SonicWall)",
+        "url": "https://securityaffairs.com/?p=200816",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
+      },
+      {
+        "name": "Canadian Centre for Cyber Security AV26-1035 (Ivanti)",
+        "url": "https://cyber.gc.ca/en/alerts-advisories/ivanti-security-advisory-av26-1035",
+        "type": "primary",
+        "published": "",
+        "retrieved": "2026-10-28"
+      },
+      {
+        "name": "Rapid7 (Ivanti)",
+        "url": "https://www.rapid7.com/blog/post/etr-ivanti-connect-secure-zero-day-exploited-in-the-wild-cve-2026-104935/",
+        "type": "research",
+        "published": "",
+        "retrieved": "2026-10-28"
+      },
+      {
+        "name": "Canadian Centre for Cyber Security AL26-025 (BeyondTrust)",
+        "url": "https://cyber.gc.ca/en/alerts-advisories/al26-025-critical-vulnerability-impacting-beyondtrust-remote-support-cve-2026-102764",
+        "type": "primary",
+        "published": "",
+        "retrieved": "2026-10-28"
       },
       {
         "name": "BeyondTrust BT26-05",
-        "url": "https://www.beyondtrust.com/blog/entry/bt26-05"
+        "url": "https://www.beyondtrust.com/blog/entry/bt26-05",
+        "type": "primary",
+        "published": "",
+        "retrieved": ""
       },
       {
-        "name": "Help Net Security (PAN-OS)",
-        "url": "https://www.helpnetsecurity.com/2026/10/21/ransomware-groups-exploit-palo-alto-globalprotect-cve-2026-0257/"
+        "name": "Palo Alto Networks CVE-2026-0257",
+        "url": "https://security.paloaltonetworks.com/CVE-2026-0257",
+        "type": "primary",
+        "published": "2026-05-13",
+        "retrieved": "2026-10-28"
+      },
+      {
+        "name": "Cybersecurity Dive (PAN-OS ransomware)",
+        "url": "https://www.cybersecuritydive.com/news/ransomware-targeting-palo-alto-networks-vulnerability/833474/",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
       }
-    ]
+    ],
+    "confidence": "high",
+    "evidence": "Vendor or government advisories confirm each flaw: Singapore CSA (SonicWall), Canadian Centre for Cyber Security (Ivanti, BeyondTrust) and Palo Alto Networks. SonicWall's advisory reported no exploitation at release; later attempts come from Security Affairs and SOCRadar. Only the Ivanti and BeyondTrust flaws were exploited before a patch.",
+    "last_verified": "2026-10-28"
   },
   {
     "id": "tg-ipass-2026-10",
@@ -287,17 +401,36 @@
     "sources": [
       {
         "name": "Telangana Today",
-        "url": "https://telanganatoday.com/tg-ipass-portal-services-disrupted-since-october-22-after-suspected-ransomware-attack"
+        "url": "https://telanganatoday.com/tg-ipass-portal-services-disrupted-since-october-22-after-suspected-ransomware-attack",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
       },
       {
-        "name": "Munsif Daily",
-        "url": "https://munsifdaily.com/ransomware-attack-hits-tg-ipass-portal-industrial-approvals-disrupted/"
+        "name": "The South First",
+        "url": "https://thesouthfirst.com/telugu/states/telangana/telangana-tg-ipass-portal-hit-by-ransomware-attack-tgcsb-investigation-cloud4c/",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
+      },
+      {
+        "name": "The420.in",
+        "url": "https://the420.in/telangana-tg-ipass-portal-ransomware-cyberattack/",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
       },
       {
         "name": "Telangana Tribune",
-        "url": "https://www.telanganatribune.com/cyber-attack-on-tg-ipass-portal-halts-industrial-approvals-in-telangana/"
+        "url": "https://www.telanganatribune.com/cyber-attack-on-tg-ipass-portal-halts-industrial-approvals-in-telangana/",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
       }
-    ]
+    ],
+    "confidence": "medium",
+    "evidence": "Several regional outlets report the same police complaint details (outage time, '.vgb' extension, ransom note, IT Act case). No statement from the Telangana government or Cloud4C was located.",
+    "last_verified": "2026-10-28"
   },
   {
     "id": "emudhra-2026-10",
@@ -305,7 +438,7 @@
     "category": "Certificate authority compromise",
     "severity": "High",
     "date": "2026-10-21",
-    "status": "Intermediates revoked and blocked by major browsers. No malicious use confirmed as of 21 Oct",
+    "status": "Intermediates revoked and blocked by major browsers. No malicious use reported",
     "india_direct": true,
     "india_link": "Direct: Indian certificate authority. MeitY says CCA-regulated DSC and eSign services are not affected",
     "sectors": [
@@ -323,7 +456,7 @@
     ],
     "scope": "TLS certificates, trust stores, code signing",
     "owner": "PKI / Platform teams",
-    "summary": "A researcher reported on 17 Oct 2026 that the private keys of eight eMudhra intermediate CA certificates could be recomputed from the public certificates, because a flawed April 2025 key-generation ceremony produced keys with too little randomness. Six intermediates issue TLS (website) certificates and two issue code-signing certificates, so anyone holding the keys could have minted trusted certificates for any site or signed malware. eMudhra revoked them and stopped issuing under its G3 root; Chrome, Mozilla, Apple and Microsoft blocked them, and Mozilla removed the emSign ECC Root CA - G3. No malicious use had been confirmed as of 21 Oct.",
+    "summary": "A researcher reported on 17 Oct 2026 that the private keys of eight eMudhra intermediate CA certificates could be recomputed from the public certificates, because a script used in April 2025 generated keys that were far too weak. Six intermediates issue TLS (website) certificates and two issue code-signing certificates, so anyone holding the keys could have minted trusted certificates for any site or signed malware. eMudhra says it revoked them within 14 hours and that no end-entity certificates were issued from them; Chrome, Apple, Microsoft and Mozilla blocked them between 17 and 20 Oct. eMudhra has since said it will leave the global TLS certificate business. No malicious use has been reported.",
     "india_impact": "eMudhra is an Indian CA and many Indian sites and apps chain to it. MeitY says the issue is limited to eMudhra's global website-security business and that CCA-regulated Digital Signature Certificates and eSign are unaffected. The lasting risk is outside browsers: API clients, containers, build pipelines, Java and Go applications and embedded devices with their own trust stores may still accept the bad intermediates.",
     "actions": [
       "Find certificates issued under the affected eMudhra intermediates and replace them; browsers already reject them.",
@@ -335,21 +468,36 @@
     "sources": [
       {
         "name": "eMudhra statement",
-        "url": "https://emudhra.com/en/post/certificate-security-incident"
+        "url": "https://emudhra.com/en/post/certificate-security-incident",
+        "type": "primary",
+        "published": "",
+        "retrieved": ""
       },
       {
-        "name": "Business Today (MeitY)",
-        "url": "https://www.businesstoday.in/technology/story/impact-has-been-very-limited-meity-on-emudhra-security-incident-says-indian-dsc-and-esign-unaffected-562927-2026-10-21"
+        "name": "CSO Online",
+        "url": "https://www.csoonline.com/article/4239634/emudhra-quits-global-tls-certificate-market-after-compromise-of-ca-signing-keys-2.html",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
       },
       {
-        "name": "The Hacker News",
-        "url": "https://thehackernews.com/2026/10/eight-emudhra-ca-keys-compromised.html"
+        "name": "Inc42",
+        "url": "https://inc42.com/buzz/emudhras-security-key-flaw-what-went-wrong-and-why-google-mozilla-stepped-in/",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
       },
       {
-        "name": "Cloudflare",
-        "url": "https://blog.cloudflare.com/emudhra-certificate-compromise"
+        "name": "Unit 42 (Palo Alto Networks)",
+        "url": "https://unit42.paloaltonetworks.com/emudhra-certificate-compromise.md",
+        "type": "research",
+        "published": "",
+        "retrieved": "2026-10-28"
       }
-    ]
+    ],
+    "confidence": "high",
+    "evidence": "eMudhra's own statement (not re-opened here) and browser vendors' blocking are reported consistently by CSO Online, Inc42 and Unit 42. No fraudulent certificates have been found in public logs.",
+    "last_verified": "2026-10-28"
   },
   {
     "id": "gujarat-pharma-2026-10",
@@ -371,7 +519,7 @@
     ],
     "scope": "Pharma ERP, LIMS and plant networks",
     "owner": "IT / OT security",
-    "summary": "Attackers breached the systems of an unnamed Ahmedabad pharmaceutical company and demanded Rs 30 crore to restore access to its data, according to reports from 20 Oct 2026. A complaint was filed in western Ahmedabad and the Gujarat State Cyber Crime Cell is examining the case. Police sources suspect Chinese hackers and indicate the company may have paid through a cryptocurrency wallet; neither point is confirmed. It is not yet clear whether files were encrypted, stolen for extortion, or deleted.",
+    "summary": "Attackers breached the systems of an unnamed Ahmedabad pharmaceutical company and demanded Rs 30 crore to restore access to its data, according to reports in October 2026. A complaint was filed in western Ahmedabad and the Gujarat State Cyber Crime Cell is examining the case. Police sources suspect Chinese hackers and indicate the company may have paid through a cryptocurrency wallet; neither point is confirmed. It is not yet clear whether files were encrypted, stolen for extortion, or deleted.",
     "india_impact": "Gujarat is India's largest pharmaceutical manufacturing cluster, and pharma firms hold formulation IP, regulatory dossiers and plant systems that make extortion pay. A reported payment, if true, invites repeat targeting of the same cluster.",
     "actions": [
       "Confirm offline backups for ERP, LIMS and QA/regulatory systems and test restores.",
@@ -383,17 +531,22 @@
     "sources": [
       {
         "name": "Medical Dialogues",
-        "url": "https://medicaldialogues.in/news/industry/pharma/gujarat-pharma-firm-hit-by-cyberattack-rs-30-crore-ransom-demanded-181638"
+        "url": "https://medicaldialogues.in/news/industry/pharma/gujarat-pharma-firm-hit-by-cyberattack-rs-30-crore-ransom-demanded-181638",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
       },
       {
         "name": "The420.in",
-        "url": "https://the420.in/gujarat-pharma-cyberattack-ransom-investigation/"
-      },
-      {
-        "name": "DrugsControl",
-        "url": "https://drugscontrol.org/news-detail.php?newsid=46207"
+        "url": "https://the420.in/?p=99959",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
       }
-    ]
+    ],
+    "confidence": "low",
+    "evidence": "One original report, based on police sources, repeated by a second outlet. The company is not named, the publication date could not be confirmed, and the attribution and ransom payment are unconfirmed.",
+    "last_verified": "2026-10-28"
   },
   {
     "id": "certin-ciad-2026-0049",
@@ -423,18 +576,23 @@
     "indicators": [],
     "sources": [
       {
-        "name": "The Hacker News",
-        "url": "https://thehackernews.com/2026/10/cert-in-warns-ai-agents-accessed.html"
+        "name": "Cloud Security Alliance research note",
+        "url": "https://labs.cloudsecurityalliance.org/research/csa-research-note-cert-in-ai-agent-unauthorized-access-20261/",
+        "type": "research",
+        "published": "",
+        "retrieved": "2026-10-28"
       },
       {
-        "name": "Deccan Herald",
-        "url": "https://www.deccanherald.com/amp/story/india/cyber-security-agency-cert-in-issues-critical-alert-on-ai-agents-breaching-indian-systems-4184975"
-      },
-      {
-        "name": "Inc42",
-        "url": "https://inc42.com/buzz/cert-in-flags-unauthorised-ai-agent-access-to-indian-organisations-systems/"
+        "name": "Deccan Chronicle",
+        "url": "https://www.deccanchronicle.com/artificial-intelligence/cert-in-issues-critical-alert-after-autonomous-ai-agents-access-live-systems-of-indian-orgs-1996324",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
       }
-    ]
+    ],
+    "confidence": "medium",
+    "evidence": "The advisory is reported consistently by Deccan Chronicle and a Cloud Security Alliance research note, but its text could not be located on the CERT-In site from the build environment.",
+    "last_verified": "2026-10-28"
   },
   {
     "id": "connectwise-2026-10",
@@ -442,7 +600,7 @@
     "category": "Supply chain: MSP / SaaS",
     "severity": "High",
     "date": "2026-10-17",
-    "status": "Cloud Backup suspended 17 Oct; phased restoration reported. Tenant clean-up falls to customers",
+    "status": "Cloud Backup suspended 17 Oct. Tenant clean-up falls to customers",
     "india_direct": false,
     "india_link": "Broad: Indian MSPs and IT service providers manage Microsoft 365 for clients worldwide",
     "sectors": [
@@ -455,8 +613,8 @@
     ],
     "scope": "Microsoft 365 tenants and app consents",
     "owner": "M365 / Identity admins",
-    "brief": "Attackers used a compromised credential of ConnectWise's Cloud Backup (SkyKick) app to get Microsoft Graph tokens in customer tenants on 15 Oct; Huntress saw activity in 162 tenants and over 300 accounts accessed.",
-    "summary": "On 15 Oct 2026 attackers used a compromised credential belonging to ConnectWise's Cloud Backup (formerly SkyKick) application to request Microsoft Graph tokens in customer tenants. ConnectWise disabled seven application identities and suspended Cloud Backup on 17 Oct, taking SaaS Security and Cloud Management offline as a precaution. Huntress reported unauthorized activity in 162 customer tenants and access to more than 300 accounts, and saw the app gain Global Administrator rights and add credentials to other apps. ConnectWise says backup archives appear intact. Suspending the app does not undo changes already made or revoke tokens already issued.",
+    "brief": "Attackers used a compromised credential of ConnectWise's Cloud Backup (SkyKick) app to sign in to customer Microsoft 365 tenants from 15 Oct; Huntress confirmed 162 tenants on 16 Oct, later 173.",
+    "summary": "From 15 Oct 2026 attackers used a compromised credential belonging to ConnectWise's Cloud Backup (formerly SkyKick) application to sign in to customer Microsoft 365 tenants. ConnectWise disabled seven application identities and suspended Cloud Backup on 17 Oct, pausing SaaS Security and Cloud Management as well. Huntress confirmed unauthorised application sign-ins in 162 tenants on 16 Oct and later identified 173. Suspending the app does not undo changes already made or revoke tokens already issued, so each tenant needs its own review.",
     "india_impact": "One trusted app with broad consent across many tenants became the way in. Indian MSPs and IT services firms run exactly these integrations for clients, so a compromise like this turns into a client-side breach.",
     "actions": [
       "Review ConnectWise/SkyKick service principals in Entra ID: sign-ins, consented permissions and new credentials since 15 Oct; remove anything unexpected and revoke refresh tokens.",
@@ -466,18 +624,30 @@
     "indicators": [],
     "sources": [
       {
-        "name": "The Hacker News",
-        "url": "https://thehackernews.com/2026/10/connectwise-suspends-cloud-backup-after.html"
+        "name": "Help Net Security",
+        "url": "https://www.helpnetsecurity.com/?p=388341",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
       },
       {
-        "name": "SpecterOps",
-        "url": "https://specterops.io/blog/2026/10/17/connectwise-skykick-breach-microsoft-365/"
+        "name": "BleepingComputer",
+        "url": "https://www.bleepingcomputer.com/news/security/hackers-breach-microsoft-365-tenants-via-connectwise-supply-chain-attack/",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
       },
       {
-        "name": "Channel Dive",
-        "url": "https://www.channeldive.com/news/connecwise-suspends-cloud-backup-hacker-microsoft-365/833370/"
+        "name": "GovInfoSecurity",
+        "url": "https://www.govinfosecurity.com/connectwise-suspends-cloud-backup-services-as-probes-hack-a-33142",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
       }
-    ]
+    ],
+    "confidence": "medium",
+    "evidence": "Timeline and scope come from Huntress's findings as reported by Help Net Security and BleepingComputer. ConnectWise's own notice was not located.",
+    "last_verified": "2026-10-28"
   },
   {
     "id": "rankmath-2026-10",
@@ -512,14 +682,30 @@
     ],
     "sources": [
       {
-        "name": "SecurityWeek",
-        "url": "https://www.securityweek.com/rank-math-pro-wordpress-plugin-compromised-in-supply-chain-attack/"
+        "name": "Patchstack",
+        "url": "https://patchstack.com/database/wordpress/plugin/seo-by-rank-math-pro/vulnerability/wordpress-rank-math-seo-pro-plugin-3-0-123-unauthenticated-embedded-malicious-code-vulnerability",
+        "type": "research",
+        "published": "",
+        "retrieved": "2026-10-28"
       },
       {
-        "name": "SC Media",
-        "url": "https://www.scworld.com/brief/malicious-rank-math-pro-version-distributed-in-supply-chain-attack"
+        "name": "SecurityWeek",
+        "url": "https://www.securityweek.com/rank-math-pro-wordpress-plugin-compromised-in-supply-chain-attack/",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
+      },
+      {
+        "name": "BleepingComputer",
+        "url": "https://bleepingcomputer.com/news/security/wordpress-seo-plugin-rank-math-compromised-to-backdoor-websites",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
       }
-    ]
+    ],
+    "confidence": "medium",
+    "evidence": "The affected window, version and CVE are consistent across Patchstack's database entry, SecurityWeek and BleepingComputer. The Wordfence advisory and Rank Math's own statement were not located.",
+    "last_verified": "2026-10-28"
   },
   {
     "id": "gitlab-2026-10",
@@ -527,7 +713,7 @@
     "category": "Critical vulnerability",
     "severity": "High",
     "date": "2026-10-21",
-    "status": "Patched 12 and 21 Oct. No exploitation reported as of 25 Oct",
+    "status": "Patched 12 and 21 Oct. No exploitation reported as of 22 Oct",
     "india_direct": false,
     "india_link": "Broad: self-managed GitLab is common in Indian IT services, GCC and product companies",
     "sectors": [
@@ -542,8 +728,8 @@
     ],
     "scope": "Self-managed GitLab servers",
     "owner": "DevOps",
-    "brief": "Two CVSS 10.0 RCEs in self-managed GitLab: CVE-2026-97229 (fixed 12 Oct) and CVE-2026-110264 (fixed 21 Oct, CE/EE from 7.0). Servers patched on 12 Oct are still exposed.",
-    "summary": "GitLab fixed two maximum-severity (CVSS 10.0) remote code execution flaws in October. CVE-2026-97229 (12 Oct) is a CI/CD regex flaw that needs a way to plant a malicious CI configuration, which open self-registration provides. CVE-2026-110264 (21 Oct) is an integer overflow in the regular-expression compiler affecting CE and EE from version 7.0, so servers patched on 12 Oct are still vulnerable. No exploitation had been reported as of 25 Oct; GitLab.com and GitLab Dedicated are already patched.",
+    "brief": "Two CVSS 10.0 flaws in self-managed GitLab: CVE-2026-97229 (fixed 12 Oct) and CVE-2026-110264 (fixed 21 Oct, CE/EE from 7.0). Servers patched on 12 Oct are still exposed.",
+    "summary": "GitLab fixed two maximum-severity (CVSS 10.0) flaws in October. CVE-2026-97229 was fixed on 12 Oct. CVE-2026-110264, fixed on 21 Oct, is an integer overflow when compiling a crafted regular expression and affects self-managed CE and EE from version 7.0, so servers patched on 12 Oct are still vulnerable. GitLab published no workaround. No exploitation had been reported, and the flaw was not in CISA KEV, as of 22 Oct; GitLab.com is already patched.",
     "india_impact": "A self-managed GitLab server holds source code, CI secrets and deployment keys; for IT services firms one server can reach many client environments.",
     "actions": [
       "Upgrade to a 21 Oct release (18.11.13, 19.0.10, 19.1.9, 19.2.9, 19.3.6, 19.4.3 or 19.5.1); the 12 Oct patch is not enough.",
@@ -552,14 +738,30 @@
     "indicators": [],
     "sources": [
       {
-        "name": "Rapid7",
-        "url": "https://www.rapid7.com/blog/post/etr-cve-2026-97229-critical-unauthenticated-remote-code-execution-in-gitlab/"
+        "name": "eSecurity Planet",
+        "url": "https://www.esecurityplanet.com/news/news-gitlab-critical-rce-patch-october/",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
       },
       {
-        "name": "eSecurity Planet",
-        "url": "https://www.esecurityplanet.com/news/news-gitlab-critical-rce-patch-october/"
+        "name": "Rescana",
+        "url": "https://www.rescana.com/post/gitlab-cve-2026-110264-unauthenticated-rce-october-2026",
+        "type": "research",
+        "published": "",
+        "retrieved": "2026-10-28"
+      },
+      {
+        "name": "IT-Connect",
+        "url": "https://www.it-connect.tech/gitlab-patches-critical-cve-2026-110264-affecting-versions-back-to-7-0/",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
       }
-    ]
+    ],
+    "confidence": "medium",
+    "evidence": "Fix dates, versions and scores are consistent across eSecurity Planet, Rescana and IT-Connect, which quote GitLab's release posts; the posts themselves were not located.",
+    "last_verified": "2026-10-28"
   },
   {
     "id": "ms-oct-2026",
@@ -590,13 +792,29 @@
     "indicators": [],
     "sources": [
       {
-        "name": "Tenable",
-        "url": "https://www.tenable.com/blog/microsofts-october-2026-patch-tuesday-addresses-1407-cves-cve-2026-96951"
+        "name": "Help Net Security",
+        "url": "https://www.helpnetsecurity.com/?p=387855",
+        "type": "news",
+        "published": "",
+        "retrieved": "2026-10-28"
       },
       {
-        "name": "BleepingComputer",
-        "url": "https://www.bleepingcomputer.com/news/microsoft/microsoft-october-2026-patch-tuesday-fixes-1-411-flaws-3-zero-days/"
+        "name": "Action1",
+        "url": "https://www.action1.com/vulnerabilities/cve-2026-96951/",
+        "type": "research",
+        "published": "",
+        "retrieved": "2026-10-28"
+      },
+      {
+        "name": "SOC Prime",
+        "url": "https://socprime.com/?p=54408",
+        "type": "research",
+        "published": "",
+        "retrieved": "2026-10-28"
       }
-    ]
+    ],
+    "confidence": "medium",
+    "evidence": "Score, root cause and exploitation status are consistent across Help Net Security, Action1 and SOC Prime, which cite Microsoft's advisory; the advisory itself was not opened from the build environment.",
+    "last_verified": "2026-10-28"
   }
 ]
