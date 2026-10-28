@@ -338,13 +338,14 @@ def build_threat_pulse(
         total_iocs = csv_meta["row_count"]
         unique_hosts = csv_meta["host_count"]
         csv_sha256 = csv_meta["file_hash"]
-        ioc_summary = get_ioc_summary(signals, public_mode=True)
+        ioc_summary = get_ioc_summary(signals, public_mode=True, as_of=now_ist.date())
     else:
-        ioc_summary = get_ioc_summary(signals, public_mode=True)
+        ioc_summary = get_ioc_summary(signals, public_mode=True, as_of=now_ist.date())
         total_iocs = ioc_summary.get("total_indicators", 0)
         unique_hosts = ioc_summary.get("unique_hosts", 0)
         csv_sha256 = ""
 
+    active_iocs = ioc_summary.get("active_indicators", 0)
     comp_hosts = ioc_summary.get("compromised_hosts", 0)
     unver_hosts = ioc_summary.get("unverified_hosts", 0)
     phish_hosts = ioc_summary.get("phishing_hosts", 0)
@@ -525,7 +526,7 @@ def build_threat_pulse(
     techniques = [t["technique"] for t in rf.ioc_technique_examples(extract_iocs(signals, public_mode=True))]
     f3_title = "3. Domestic .in Infrastructure Leveraged for Malware Delivery Chains [Confidence: C2]"
     f3_body = (
-        f"Technical telemetry identifies {total_iocs} actionable domestic indicators across {unique_hosts} hosts "
+        f"Technical telemetry identifies {total_iocs} domestic indicators ({active_iocs} still active) across {unique_hosts} hosts "
         f"({comp_hosts} of {unique_hosts} hosts reported as compromised, {unver_hosts} unverified{phish_part}) "
         f"utilizing exact .in ccTLD suffixes. "
         + (f"Distribution chains leverage {', '.join(techniques)} delivery tactics " if techniques else "Distribution chains use ")
@@ -567,7 +568,9 @@ def build_threat_pulse(
                     "<b>PRIORITY DEFENSIVE ACTION FOR SECURITY LEADERS & SOC TEAMS</b><br/>"
                     f"<b>1. Perimeter Ingress Remediation:</b> {'Patch Internet-facing ' + ', '.join(rf.edge_vendor_names(rf.kev_by_product(signals))) + ' appliances listed in CISA KEV immediately.' if edge_text else 'Patch the CVEs listed in CISA KEV this window, internet-facing systems first.'}<br/>"
                     "<b>2. Remote Access Hardening:</b> Enforce phishing-resistant multi-factor authentication (MFA) across all VPN, RDP, and cloud administrative portals.<br/>"
-                    "<b>3. Actionable IOC Ingestion:</b> Ingest companion .in domestic indicators into perimeter monitoring in <b>alert-first mode</b>; notify site owners rather than imposing uncoordinated edge blocks.",
+                    + ("<b>3. Actionable IOC Ingestion:</b> Ingest the active companion .in domestic indicators into perimeter monitoring in <b>alert-first mode</b>; notify site owners rather than imposing uncoordinated edge blocks."
+                       if active_iocs else
+                       "<b>3. Indicator Review:</b> Every companion .in indicator has expired; use them only to search past logs, and refresh the feeds before loading new ones into monitoring."),
                     st["callout_body"],
                 )
             ]

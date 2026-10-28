@@ -5,6 +5,9 @@ Provides:
 - Machine-readable CSV export (INTERNAL / TLP:CLEAR) with granular role and action taxonomy.
 - Safe defanging for human-readable reports (hxxp://, [.]).
 - Indicator metadata tracking (first seen, last seen, confidence, decay/expiry).
+- Active/expired status against the date the sheet is generated: an expired
+  indicator stays in the CSV for retrospective log searches but is never
+  presented as something to load into blocking or alerting controls.
 - Strict country TLD identification and host normalization.
 """
 
@@ -19,6 +22,21 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .signals import Signal, SignalType
+
+IOC_LIFETIME_DAYS = 14
+EXPIRED_ACTION = "expired: retrospective log search only"
+
+
+def _as_of_str(as_of: Any = None) -> str:
+    """The date an indicator's status is judged against (default: today, IST)."""
+    if as_of is None:
+        return datetime.now(timezone(timedelta(hours=5, minutes=30))).date().isoformat()
+    return str(as_of.isoformat() if hasattr(as_of, "isoformat") else as_of)[:10]
+
+
+def ioc_status(expiry_date: str, as_of: Any = None) -> str:
+    """'expired' once the expiry date has passed, else 'active'."""
+    return "expired" if expiry_date and expiry_date[:10] < _as_of_str(as_of) else "active"
 
 
 def defang(text: str) -> str:
@@ -195,12 +213,14 @@ def get_feed_license(source: str) -> str:
     return "Public Open Source Intelligence (OSINT)"
 
 
-def extract_iocs(signals: List[Signal], public_mode: bool = False) -> List[Dict]:
+def extract_iocs(signals: List[Signal], public_mode: bool = False, as_of: Any = None) -> List[Dict]:
     """
     Extracts raw and defanged IOC records from infrastructure signals,
     enriching each record with taxonomy roles, clean families, delivery techniques, and defensive guidance.
-    Resolves each host to exactly one highest-evidence ioc_role.
+    Resolves each host to exactly one highest-evidence ioc_role. Each record's
+    status is judged against `as_of` (default today); active records sort first.
     """
+    as_of_str = _as_of_str(as_of)
     raw_candidates = []
     seen = set()
 
@@ -307,10 +327,14 @@ def extract_iocs(signals: List[Signal], public_mode: bool = False) -> List[Dict]
         obs_date = (s.observed_at or datetime.now(timezone.utc).isoformat())[:10]
         try:
             obs_dt = datetime.fromisoformat(s.observed_at.replace("Z", "+00:00"))
-            expiry_dt = obs_dt + timedelta(days=14)
+            expiry_dt = obs_dt + timedelta(days=IOC_LIFETIME_DAYS)
             expiry_str = expiry_dt.strftime("%Y-%m-%d")
         except Exception:
             expiry_str = ""
+
+        status = ioc_status(expiry_str, as_of_str)
+        if status == "expired":
+            action = EXPIRED_ACTION
 
         fox_id = raw_data.get("id")
         ext_ref = raw_data.get("reference")
@@ -348,6 +372,7 @@ def extract_iocs(signals: List[Signal], public_mode: bool = False) -> List[Dict]
             "type": ind_type,
             "threat_type": threat_type,
             "ioc_role": role,
+            "status": status,
             "recommended_action": action,
             "malware_family": malware,
             "technique": technique,
@@ -371,6 +396,7 @@ def extract_iocs(signals: List[Signal], public_mode: bool = False) -> List[Dict]
         })
 
     iocs.sort(key=lambda x: (x["first_seen"], x["technique"]), reverse=True)
+    iocs.sort(key=lambda x: x["status"] != "active")
     return iocs
 
 
@@ -385,17 +411,19 @@ def compute_file_sha256(path: str) -> str:
     return h.hexdigest()
 
 
-def export_iocs_csv(signals: List[Signal], output_path: str, public_mode: bool = False) -> Tuple[str, str]:
+def export_iocs_csv(signals: List[Signal], output_path: str, public_mode: bool = False,
+                    as_of: Any = None) -> Tuple[str, str]:
     """
     Exports all infrastructure indicators to a machine-readable CSV file (INTERNAL or TLP:CLEAR).
+    Expired rows are kept for retrospective searches, marked in the status column.
     Returns (output_path, sha256_hash).
     """
-    iocs = extract_iocs(signals, public_mode=public_mode)
+    iocs = extract_iocs(signals, public_mode=public_mode, as_of=as_of)
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
     fieldnames = [
         "indicator", "defanged", "host", "wildcard", "type", "threat_type",
-        "ioc_role", "recommended_action", "malware_family", "technique", "source_feed",
+        "ioc_role", "status", "recommended_action", "malware_family", "technique", "source_feed",
         "source_confidence", "bulletin_confidence", "tld_country", "asn", "asn_country",
         "origin_hidden", "dispute_contact", "license_attribution",
         "reference_url", "first_seen", "last_seen", "expiry_date", "tlp",
@@ -460,9 +488,14 @@ def compute_asn_hosting_distribution(iocs: List[Dict]) -> Tuple[str, str]:
     return dist_str, legend_str
 
 
-def get_ioc_summary(signals: List[Signal], public_mode: bool = False) -> Dict:
-    """Returns aggregated summary metrics for inclusion in executive report tables."""
-    iocs = extract_iocs(signals, public_mode=public_mode)
+def get_ioc_summary(signals: List[Signal], public_mode: bool = False, as_of: Any = None,
+                    recent_since: Optional[str] = None) -> Dict:
+    """Returns aggregated summary metrics for inclusion in executive report tables.
+
+    `recent_since` (ISO date) sets the cut-off for ioc_window_recent_count;
+    without it the count is 0.
+    """
+    iocs = extract_iocs(signals, public_mode=public_mode, as_of=as_of)
     family_counts = Counter(i["malware_family"] for i in iocs if i["malware_family"])
     technique_counts = Counter(i["technique"] for i in iocs if i["technique"])
     type_counts = Counter(i["type"] for i in iocs)
@@ -476,11 +509,17 @@ def get_ioc_summary(signals: List[Signal], public_mode: bool = False) -> Dict:
 
     dates = sorted([i["first_seen"] for i in iocs if i.get("first_seen")])
     ioc_win = f"{dates[0]} to {dates[-1]}" if dates else ""
-    recent_cnt = sum(1 for i in iocs if i.get("first_seen") and i["first_seen"] >= "2026-10-07")
+    recent_cnt = (sum(1 for i in iocs if i.get("first_seen") and i["first_seen"] >= recent_since)
+                  if recent_since else 0)
+    expiries = sorted(i["expiry_date"] for i in iocs if i.get("expiry_date"))
     asn_dist_str, asn_legend_str = compute_asn_hosting_distribution(iocs)
 
     return {
         "total_indicators": len(iocs),
+        "active_indicators": sum(1 for i in iocs if i["status"] == "active"),
+        "expired_indicators": sum(1 for i in iocs if i["status"] == "expired"),
+        "status_as_of": _as_of_str(as_of),
+        "latest_expiry": expiries[-1] if expiries else "",
         "unique_hosts": len(unique_hosts),
         "unique_hosts_in": len({i["host"] for i in iocs if i.get("tld_country") == "IN"}),
         "compromised_hosts": (host_role_counts.get("compromised_legitimate", 0) +

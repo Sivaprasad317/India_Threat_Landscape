@@ -376,6 +376,19 @@ class TestExports(unittest.TestCase):
         self.assertEqual(event["distribution"], "3")
         self.assertTrue(all(a["to_ids"] for a in event["Attribute"]))
 
+    def test_expired_indicators_left_out(self):
+        from core.export import to_misp_event, to_stix_bundle
+        iocs = [dict(self.IOCS[0], status="expired"), dict(self.IOCS[1], status="active")]
+        bundle = to_stix_bundle(iocs, "Analyst")
+        patterns = [o["pattern"] for o in bundle["objects"] if o["type"] == "indicator"]
+        self.assertEqual(len(patterns), 1)
+        self.assertTrue(patterns[0].startswith("[url:"))
+        attrs = to_misp_event(iocs, "Analyst", event_date="2026-10-28")["Event"]["Attribute"]
+        self.assertEqual([a["type"] for a in attrs], ["url"])
+        # Kept on request, but never marked for detection
+        attrs = to_misp_event(iocs, "Analyst", event_date="2026-10-28", include_expired=True)["Event"]["Attribute"]
+        self.assertEqual({a["type"]: a["to_ids"] for a in attrs}, {"domain": False, "url": True})
+
 
 class TestScoring(unittest.TestCase):
     def test_scoring_multi_zero_cap_guard(self):
@@ -433,7 +446,7 @@ class TestIOCManagement(unittest.TestCase):
         self.assertFalse(any(i["host"].endswith(".in.ua") for i in iocs))
         # Ensure all 50 IOCs have non-empty ASN
         self.assertTrue(all(len(i["asn"].strip()) > 0 for i in iocs))
-        summary = get_ioc_summary(sigs)
+        summary = get_ioc_summary(sigs, as_of="2026-10-11", recent_since="2026-10-07")
         self.assertEqual(summary["total_indicators"], 50)
         self.assertEqual(summary["unique_hosts"], 43)
         # Compromise status comes from the feed's own is_compromised flag
@@ -441,6 +454,27 @@ class TestIOCManagement(unittest.TestCase):
         self.assertEqual(summary["unverified_hosts"], 8)
         self.assertEqual(summary["phishing_hosts"], 0)
         self.assertEqual(summary["ioc_window_recent_count"], 23)
+        self.assertEqual(summary["active_indicators"], 50)
+
+    def test_ioc_expiry_against_generation_date(self):
+        from core.iocs import EXPIRED_ACTION, extract_iocs, get_ioc_summary, ioc_status
+        self.assertEqual(ioc_status("2026-10-24", "2026-10-24"), "active")
+        self.assertEqual(ioc_status("2026-10-24", "2026-10-25"), "expired")
+        self.assertEqual(ioc_status("", "2026-10-25"), "active")
+        sigs = [Signal.from_row(r) for r in db.get_signals(days=60)]
+        # Generated 28 Oct over data ending 10 Oct: every indicator has expired
+        iocs = extract_iocs(sigs, as_of="2026-10-28")
+        self.assertTrue(all(i["status"] == "expired" for i in iocs))
+        self.assertTrue(all(i["recommended_action"] == EXPIRED_ACTION for i in iocs))
+        summary = get_ioc_summary(sigs, as_of="2026-10-28")
+        self.assertEqual((summary["active_indicators"], summary["expired_indicators"]), (0, 50))
+        self.assertEqual(summary["latest_expiry"], "2026-10-24")
+        # Part-way through, active indicators sort ahead of expired ones
+        mixed = extract_iocs(sigs, as_of="2026-10-20")
+        statuses = [i["status"] for i in mixed]
+        self.assertIn("expired", statuses)
+        self.assertEqual(statuses, sorted(statuses))
+        self.assertTrue(all(i["expiry_date"] >= "2026-10-20" for i in mixed if i["status"] == "active"))
 
     def test_scoring_determinism(self):
         sigs = [Signal.from_row(r) for r in db.get_signals(days=60)]
@@ -690,6 +724,7 @@ class TestSourceHealthAndValidation(unittest.TestCase):
             "flaky":         {"source": "Flaky Feed", "max_age_days": 3},
             "never":         {"source": "Never Feed", "max_age_days": 3},
             "manual":        {"source": None, "max_age_days": None},
+            "keyed":         {"source": "Keyed Feed", "max_age_days": 3},
         }
         self._run("ok_feed", "2026-10-27T01:00:00+00:00", 5)
         self._signal("OK Feed", "2026-10-26T00:00:00+00:00")
@@ -700,7 +735,11 @@ class TestSourceHealthAndValidation(unittest.TestCase):
         self._run("flaky", "2026-10-27T01:00:00+00:00", 5, ["HTTP 503 (attempt 1/3)"])
         self._signal("Flaky Feed", "2026-10-26T00:00:00+00:00")
         self._run("manual", "2026-10-01T01:00:00+00:00", 0)
-        rows = {r["collector"]: r for r in source_health(now=now, db_path=self.db_path, feeds=feeds)}
+        # Collected once with a key, which this machine no longer has
+        self._run("keyed", "2026-10-01T01:00:00+00:00", 5)
+        self._signal("Keyed Feed", "2026-09-30T00:00:00+00:00")
+        rows = {r["collector"]: r for r in source_health(now=now, db_path=self.db_path, feeds=feeds,
+                                                         missing_env={"keyed": ["KEYED_API_KEY"]})}
         self.assertEqual(rows["ok_feed"]["status"], "OK")
         self.assertEqual(rows["old_records"]["status"], "STALE")  # fresh run, old data
         self.assertEqual(rows["broken"]["status"], "FAILING")
@@ -708,6 +747,10 @@ class TestSourceHealthAndValidation(unittest.TestCase):
         self.assertEqual(rows["flaky"]["status"], "DEGRADED")
         self.assertEqual(rows["never"]["status"], "NOT COLLECTED")
         self.assertEqual(rows["manual"]["status"], "MANUAL")
+        self.assertEqual(rows["keyed"]["status"], "NO KEY")
+        self.assertEqual(rows["keyed"]["newest_record"], "2026-09-30")
+        self.assertEqual(rows["keyed"]["last_error"], "needs KEYED_API_KEY")
+        # Unconfigured feeds are not failures
         self.assertEqual({r["collector"] for r in problems(list(rows.values()))}, {"old_records", "broken"})
 
     def test_bundled_data_files_are_valid(self):

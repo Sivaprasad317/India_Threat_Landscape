@@ -71,7 +71,10 @@ python main.py export --format both --public   # STIX 2.1 + MISP JSON
 ```
 
 Run `collect` daily, `bulletin` weekly. `health` before a bulletin tells you
-whether any feed is failing or stale; the bulletin repeats it on the cover.
+whether any feed is failing or stale; the bulletin repeats it on the cover,
+along with how old the newest record is and how many indicators are still
+active. A feed whose API key is not set shows as NO KEY and is not counted
+as a failure.
 
 ### What the bulletin contains
 
@@ -271,7 +274,7 @@ Run `python main.py validate` after editing; CI runs it on every push.
 every day at 06:47 IST: it collects every feed, builds the public (TLP:CLEAR)
 bulletin and IOC sheet, uploads them as a run artifact (Actions tab, open the
 run, Artifacts), and fails, so GitHub emails you, when a feed is failing or
-stale. The signal database is carried between runs in the Actions cache. Add
+stale (feeds without a key are skipped, not failed). The signal database is carried between runs in the Actions cache. Add
 `ABUSECH_AUTH_KEY` and `OTX_API_KEY` under Settings, Secrets and variables,
 Actions to enable those feeds. Scheduled workflows run from the `main` branch.
 
@@ -292,7 +295,9 @@ builds a sample bulletin on every push (Python 3.10 and 3.12).
 `python main.py export --format both [--public]` writes the IOC sheet as a
 STIX 2.1 bundle and a MISP event to `exports/`. Roles, recommended actions,
 confidence and 14-day expiry match the CSV; IDs are stable across runs so
-platforms update rather than duplicate. Public edition is marked TLP:WHITE
+platforms update rather than duplicate. Both formats are for loading into
+detection, so **expired indicators are left out**; `--include-expired` keeps
+them for a historical export, and MISP then marks them `to_ids: false`. Public edition is marked TLP:WHITE
 (STIX 2.1's built-in marking, the TLP 2.0 CLEAR equivalent) and `tlp:clear`
 in MISP; internal is TLP:GREEN.
 

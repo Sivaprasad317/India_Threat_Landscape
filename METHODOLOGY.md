@@ -50,7 +50,14 @@ reports two dates per feed, because they answer different questions:
 A feed is FAILING when its latest run returned nothing and logged errors,
 DEGRADED when it returned data with errors (for example after retries), STALE
 when either date is older than the limit above, and MANUAL for
-analyst-maintained files. Collectors retry network errors, HTTP 429 and 5xx
+analyst-maintained files. A feed whose collector needs an API key that is not
+set where the report runs is NO KEY: shown with its dates, not counted as a
+failure, because it is a configuration choice.
+
+**Data age.** The bulletin cover gives the newest record's date. When it is
+more than 3 days (the shortest feed cadence) before the generation date, the
+cover says so in red: the counts and rankings describe the picture to that
+date, not current activity. Collectors retry network errors, HTTP 429 and 5xx
 three times with exponential backoff; other HTTP errors are final.
 
 ---
@@ -211,15 +218,24 @@ weight rises.
 - **ASN** comes from `data/host_asn_cache.json` (lookups recorded at
   collection time). A host with no recorded lookup is reported as
   `unresolved`, never guessed.
-- Indicators expire 14 days after first seen. Text in the bulletin is
-  defanged (`hxxp`, `[.]`); the CSV keeps both raw and defanged forms.
+- Indicators expire 14 days after first seen. **Status** (CSV column) is
+  `active` or `expired` against the date the sheet is generated, not the
+  reporting window. An expired row keeps its place in the CSV, because it is
+  still useful for searching past logs, but its action becomes
+  `expired: retrospective log search only`, active rows sort first, and the
+  bulletin counts active indicators separately and says so on the cover when
+  none are left.
+- Text in the bulletin is defanged (`hxxp`, `[.]`); the CSV keeps both raw
+  and defanged forms.
 
 ---
 
-**Exports.** `python main.py export` writes the same indicators as a STIX 2.1
-bundle (validated with the OASIS `stix2` library during development) and a
-MISP event, with stable IDs, the CSV's roles, actions, confidence and expiry,
+**Exports.** `python main.py export` writes the active indicators as a STIX
+2.1 bundle (validated with the OASIS `stix2` library during development) and
+a MISP event, with stable IDs, the CSV's roles, actions, confidence and expiry,
 and TLP marking (public: TLP:WHITE / `tlp:clear`; internal: TLP:GREEN).
+Expired indicators are left out because both formats are loaded straight into
+detection; `--include-expired` keeps them, with MISP `to_ids` off.
 
 ---
 

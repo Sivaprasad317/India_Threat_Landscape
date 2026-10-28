@@ -8,6 +8,10 @@ same IDs and platforms update rather than duplicate.
 
 Marking: the public edition is TLP:WHITE (the STIX 2.1 built-in marking,
 equivalent to TLP 2.0 CLEAR); the internal edition is TLP:GREEN.
+
+Both formats are meant to be loaded into detection, so expired indicators
+(status "expired" in the CSV) are left out unless the caller asks for them;
+when included, a MISP attribute for one is not marked for detection (to_ids).
 """
 
 import json
@@ -62,7 +66,14 @@ def _description(ioc: Dict) -> str:
     return ". ".join(p for p in parts if p) + "."
 
 
-def to_stix_bundle(iocs: List[Dict], producer: str, public_mode: bool = False) -> Dict:
+def actionable(iocs: List[Dict], include_expired: bool = False) -> List[Dict]:
+    """Indicators fit to load into detection: the active ones, unless told otherwise."""
+    return list(iocs) if include_expired else [i for i in iocs if i.get("status") != "expired"]
+
+
+def to_stix_bundle(iocs: List[Dict], producer: str, public_mode: bool = False,
+                   include_expired: bool = False) -> Dict:
+    iocs = actionable(iocs, include_expired)
     tlp = "white" if public_mode else "green"
     identity_id = _id("identity", producer)
     marking_id = TLP_MARKINGS[tlp]
@@ -116,7 +127,8 @@ def misp_attribute_type(ioc: Dict) -> Dict:
 
 
 def to_misp_event(iocs: List[Dict], producer: str, public_mode: bool = False,
-                  event_date: Optional[str] = None) -> Dict:
+                  event_date: Optional[str] = None, include_expired: bool = False) -> Dict:
+    iocs = actionable(iocs, include_expired)
     event_date = event_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     edition = "public" if public_mode else "internal"
     attributes, seen = [], set()
@@ -129,7 +141,7 @@ def to_misp_event(iocs: List[Dict], producer: str, public_mode: bool = False,
         attr.update({
             "uuid": str(uuid.uuid5(NAMESPACE, f"misp-attribute:{key}")),
             "category": "Network activity",
-            "to_ids": True,
+            "to_ids": ioc.get("status") != "expired",
             "comment": _description(ioc)[:250],
         })
         if ioc.get("first_seen"):
